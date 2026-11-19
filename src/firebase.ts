@@ -13,6 +13,7 @@ import {
   doc,
   getDocFromServer,
   getFirestore,
+  initializeFirestore,
   type Firestore,
 } from 'firebase/firestore';
 import firebaseAppletConfig from '../firebase-applet-config.json';
@@ -35,8 +36,25 @@ const recaptchaSiteKey =
 
 export const app = getApps().length > 0 ? getApps()[0] : initializeApp(envConfig);
 
-export const db: Firestore =
-  databaseId && databaseId !== '(default)' ? getFirestore(app, databaseId) : getFirestore(app);
+function createFirestoreInstance(): Firestore {
+  const targetDbId = databaseId && databaseId !== '(default)' ? databaseId : undefined;
+  if (typeof window !== 'undefined') {
+    try {
+      return initializeFirestore(
+        app,
+        {
+          experimentalForceLongPolling: true,
+        },
+        targetDbId
+      );
+    } catch {
+      return targetDbId ? getFirestore(app, targetDbId) : getFirestore(app);
+    }
+  }
+  return targetDbId ? getFirestore(app, targetDbId) : getFirestore(app);
+}
+
+export const db: Firestore = createFirestoreInstance();
 
 export const auth: Auth = getAuth(app);
 
@@ -125,11 +143,27 @@ export function handleFirestoreError(
 
 async function testConnection(): Promise<void> {
   if (typeof window === 'undefined') return;
-  try {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+
+  const attemptCheck = async () => {
     await getDocFromServer(doc(db, 'test', 'connection'));
+  };
+
+  try {
+    await attemptCheck();
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error('Verifique sua configuração do Firebase (cliente offline).');
+      await new Promise((resolve) => window.setTimeout(resolve, 1200));
+      try {
+        await attemptCheck();
+      } catch (retryError) {
+        if (
+          retryError instanceof Error &&
+          retryError.message.includes('the client is offline')
+        ) {
+          console.error('Verifique sua configuração do Firebase (cliente offline).');
+        }
+      }
     }
   }
 }
