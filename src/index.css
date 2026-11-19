@@ -1,20 +1,20 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
+@import "./styles/tokens.css";
 
 @layer base {
-  :root {
-    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    --font-display: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  }
-
   html {
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    color: var(--text-primary);
+    background-color: var(--surface-bg);
   }
 
-  h1, h2, h3, .font-display {
+  h1,
+  h2,
+  h3,
+  .font-display {
     font-family: var(--font-display);
   }
 
@@ -23,8 +23,102 @@
   }
 }
 
+@keyframes ametaFadeSlide {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes ametaModalExpand {
+  from {
+    opacity: 0;
+    transform: scale(0.985) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes ametaToastIn {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes ametaCheckDraw {
+  from {
+    stroke-dashoffset: 36;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes ametaCircleScale {
+  from {
+    opacity: 0;
+    transform: scale(0.86);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-page-enter {
+  animation: ametaFadeSlide var(--duration-normal) var(--ease-out) both;
+}
+
+.animate-modal-expand {
+  animation: ametaModalExpand var(--duration-normal) var(--ease-out) both;
+}
+
+.animate-toast-in {
+  animation: ametaToastIn var(--duration-fast) var(--ease-out) both;
+}
+
+.animate-check-circle {
+  animation: ametaCircleScale 280ms var(--ease-out) both;
+}
+
+.animate-check-path {
+  stroke-dasharray: 36;
+  stroke-dashoffset: 36;
+  animation: ametaCheckDraw 320ms 120ms var(--ease-out) forwards;
+}
+
+.ameta-btn-interactive {
+  transition:
+    transform var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+
+.ameta-btn-interactive:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.ameta-btn-interactive:active:not(:disabled) {
+  transform: translateY(0) scale(0.985);
+}
+
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;

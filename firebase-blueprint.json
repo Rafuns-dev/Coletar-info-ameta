@@ -201,6 +201,16 @@
           "type": "string",
           "maxLength": 180
         },
+        "documentosSelecionados": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "minItems": 1,
+          "maxItems": 40
+        },
         "camposTemplate": {
           "type": "object"
         },
@@ -238,6 +248,7 @@
         "valorParcela",
         "mesAnoInicio",
         "localData",
+        "documentosSelecionados",
         "camposTemplate",
         "formatoInicial",
         "geradoPorUid",

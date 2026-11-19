@@ -1,5 +1,10 @@
 import { jsPDF } from 'jspdf';
+import { DISCOUNT_TERM_DOCUMENT_OPTIONS } from '../shared/discountTermDocuments.ts';
 import type { DiscountTermTemplateFields } from '../shared/schema.ts';
+
+function normalizePdfText(value: string): string {
+  return value.replace(/\u2011/g, '-');
+}
 
 function drawCheckbox(doc: jsPDF, x: number, yTop: number, checked: boolean): void {
   const size = 3.1;
@@ -12,10 +17,10 @@ function drawCheckbox(doc: jsPDF, x: number, yTop: number, checked: boolean): vo
   }
 }
 
-export function exportDiscountTermToPdf(
+export function buildDiscountTermPdfDocument(
   fields: DiscountTermTemplateFields,
-  companyNameHint?: string
-): void {
+  selectedDocuments?: readonly string[]
+): jsPDF {
   const doc = new jsPDF({
     orientation: 'portrait',
     unit: 'mm',
@@ -56,7 +61,7 @@ export function exportDiscountTermToPdf(
     doc.setFontSize(fontSize);
     doc.setTextColor(15, 23, 42);
 
-    const lines = doc.splitTextToSize(text, contentWidth - indent) as string[];
+    const lines = doc.splitTextToSize(normalizePdfText(text), contentWidth - indent) as string[];
     const needed = lines.length * lineHeight;
     ensureSpace(needed);
 
@@ -82,7 +87,7 @@ export function exportDiscountTermToPdf(
     doc.setFontSize(10.5);
     doc.setTextColor(15, 23, 42);
 
-    const lines = doc.splitTextToSize(text, maxW) as string[];
+    const lines = doc.splitTextToSize(normalizePdfText(text), maxW) as string[];
     ensureSpace(lines.length * lineHeight);
 
     if (level === 0) {
@@ -108,7 +113,7 @@ export function exportDiscountTermToPdf(
     doc.setFontSize(10.5);
     doc.setTextColor(15, 23, 42);
 
-    const lines = doc.splitTextToSize(text, maxW) as string[];
+    const lines = doc.splitTextToSize(normalizePdfText(text), maxW) as string[];
     ensureSpace(lines.length * lineHeight);
 
     doc.setDrawColor(15, 23, 42);
@@ -129,7 +134,7 @@ export function exportDiscountTermToPdf(
     doc.setFontSize(10.5);
     doc.setTextColor(15, 23, 42);
 
-    const lines = doc.splitTextToSize(text, maxW) as string[];
+    const lines = doc.splitTextToSize(normalizePdfText(text), maxW) as string[];
     ensureSpace(lines.length * lineHeight);
 
     doc.text(`${num}.`, numX, y);
@@ -175,22 +180,15 @@ export function exportDiscountTermToPdf(
     { spaceAfter: 3.2 }
   );
 
-  writeBullet('NR-06 – Equipamento de Proteção Individual (EPI)');
-  writeBullet('NR-07 – Programa de Controle Médico de Saúde Ocupacional (PCMSO)');
-  writeBullet('Ficha de Entrega e Controle de EPI');
-  writeBullet('PCMSO – Programa de Controle Médico de Saúde Ocupacional');
-  writeBullet('PGR – Programa de Gerenciamento de Riscos');
-  writeBullet('Integração de Segurança do Trabalho');
-  writeBullet('Ordem de Serviço de Segurança e Saúde no Trabalho');
-  writeBullet('NR-10 – Segurança em Instalações e Serviços em Eletricidade');
-  writeBullet('NR-35 – Trabalho em Altura');
-  writeBullet('Cartas de Anuência da NR-10');
-  writeBullet('Cartas de Anuência da NR-35');
-  writeBullet(
-    'Demais Normas Regulamentadoras (NRs), documentos técnicos, formulários e registros exigidos pelos órgãos fiscalizadores ou contratantes.',
-    0,
-    1.5
-  );
+  const documentsToRender =
+    selectedDocuments && selectedDocuments.length > 0
+      ? selectedDocuments
+      : DISCOUNT_TERM_DOCUMENT_OPTIONS;
+
+  documentsToRender.forEach((docLabel, idx) => {
+    const isLast = idx === documentsToRender.length - 1;
+    writeBullet(docLabel, 0, isLast ? 1.5 : 2.0);
+  });
   writeDivider();
 
   // CLÁUSULA SEGUNDA
@@ -299,6 +297,16 @@ export function exportDiscountTermToPdf(
   writeParagraph('Assinatura: _______________________________________________', {
     spaceAfter: 2.0,
   });
+
+  return doc;
+}
+
+export function exportDiscountTermToPdf(
+  fields: DiscountTermTemplateFields,
+  companyNameHint?: string,
+  selectedDocuments?: readonly string[]
+): void {
+  const doc = buildDiscountTermPdfDocument(fields, selectedDocuments);
 
   const slugSource = companyNameHint || fields.CONTRATADA_RAZAO_SOCIAL || 'termo-desconto';
   const safeSlug = slugSource

@@ -236,6 +236,16 @@ export const discountTermGenerateSchema = z.object({
   contractorCompanyName: z.string().max(200),
   contractorCnpj: z.string().max(30),
   contractorAddress: z.string().max(350),
+  selectedDocuments: z
+    .array(
+      z
+        .string()
+        .trim()
+        .min(1, { message: 'Documento inválido.' })
+        .max(300, { message: 'Cada documento pode ter no máximo 300 caracteres.' })
+    )
+    .min(1, { message: 'Selecione pelo menos um documento para gerar o termo.' })
+    .max(40, { message: 'Selecione no máximo 40 documentos por termo.' }),
   templateFields: z.object({
     CONTRATADA_RAZAO_SOCIAL: z.string().max(250),
     CONTRATADA_CNPJ: z.string().max(40),
@@ -266,6 +276,7 @@ export interface DiscountTermHistoryItem {
   installmentValueDisplay: string;
   startMonthYear: string;
   localDate: string;
+  selectedDocuments: string[];
   templateFields: DiscountTermTemplateFields;
   generatedByUserId: string;
   generatedByName: string;

@@ -27,6 +27,7 @@ export function useAdminTheme() {
   return {
     isDark,
     toggleTheme: () => setIsDark((prev) => !prev),
+    setDark: (next: boolean) => setIsDark(next),
   };
 }
 
@@ -42,9 +43,13 @@ export function ThemeToggle({ isDark, onToggle }: ThemeToggleProps) {
       onClick={onToggle}
       aria-label={isDark ? 'Ativar modo claro' : 'Ativar modo escuro'}
       title={isDark ? 'Modo claro' : 'Modo escuro'}
-      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1E40AF] shrink-0"
+      className="ameta-btn-interactive inline-flex h-11 w-11 items-center justify-center rounded-[10px] border border-[var(--border-default)] bg-[var(--surface-card)] text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] hover:text-[var(--text-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-royal)] shrink-0"
     >
-      {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+      {isDark ? (
+        <Sun className="h-4 w-4 text-amber-400" aria-hidden="true" />
+      ) : (
+        <Moon className="h-4 w-4" aria-hidden="true" />
+      )}
     </button>
   );
 }

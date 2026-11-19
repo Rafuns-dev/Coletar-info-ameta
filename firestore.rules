@@ -217,6 +217,7 @@ service cloud.firestore {
         'valorParcela',
         'mesAnoInicio',
         'localData',
+        'documentosSelecionados',
         'camposTemplate',
         'formatoInicial',
         'geradoPorUid',
@@ -234,6 +235,7 @@ service cloud.firestore {
         'valorParcela',
         'mesAnoInicio',
         'localData',
+        'documentosSelecionados',
         'camposTemplate',
         'formatoInicial',
         'geradoPorUid',
@@ -250,6 +252,12 @@ service cloud.firestore {
       && txt(data.valorParcela, 0, 40)
       && txt(data.mesAnoInicio, 0, 40)
       && txt(data.localData, 0, 180)
+      && data.documentosSelecionados is list
+      && data.documentosSelecionados.size() >= 1
+      && data.documentosSelecionados.size() <= 40
+      && data.documentosSelecionados[0] is string
+      && data.documentosSelecionados[0].size() >= 1
+      && data.documentosSelecionados[0].size() <= 300
       && isValidCamposTemplate(data.camposTemplate)
       && data.formatoInicial is string && data.formatoInicial in ['docx', 'pdf']
       && isValidId(data.geradoPorUid)

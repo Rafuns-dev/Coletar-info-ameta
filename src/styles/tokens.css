@@ -1,0 +1,77 @@
+:root {
+  /* Paleta da marca Ameta Serviços */
+  --brand-navy: #1f2e85;
+  --brand-navy-deep: #172368;
+  --brand-royal: #2536a8;
+  --brand-teal: #229a9a;
+  --brand-teal-hover: #1b8181;
+  --brand-gray: #7f7f7f;
+  --brand-gradient: linear-gradient(135deg, #1f2e85 0%, #235896 52%, #229a9a 100%);
+
+  /* Superfícies e textos — Tema Claro */
+  --surface-bg: #f5f7fb;
+  --surface-card: #ffffff;
+  --surface-subtle: #eef2f8;
+  --surface-hover: #f0f4fa;
+  --border-default: #e3e7ef;
+  --border-strong: #cdd4e3;
+  --text-primary: #1b2340;
+  --text-secondary: #5e667d;
+  --text-muted: #7f7f7f;
+
+  /* Estados semânticos */
+  --status-success: #1e9e6a;
+  --status-success-bg: #ebf9f3;
+  --status-success-border: #bce8d4;
+  --status-warning: #e3a008;
+  --status-warning-bg: #fef9ea;
+  --status-warning-border: #f5dfa0;
+  --status-error: #d64545;
+  --status-error-bg: #fdf1f1;
+  --status-error-border: #f5c6c6;
+  --status-info: #2536a8;
+  --status-info-bg: #eef1fc;
+  --status-info-border: #c9d2f7;
+
+  /* Tipografia */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Raios, sombras e ritmo de movimento */
+  --radius-card: 12px;
+  --radius-input: 10px;
+  --shadow-card: 0 1px 2px rgba(27, 35, 64, 0.04), 0 6px 20px -8px rgba(31, 46, 133, 0.08);
+  --shadow-elevated: 0 10px 30px -10px rgba(27, 35, 64, 0.16), 0 2px 8px -2px rgba(31, 46, 133, 0.08);
+  --duration-fast: 160ms;
+  --duration-normal: 240ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.dark {
+  --surface-bg: #0b1120;
+  --surface-card: #121b2f;
+  --surface-subtle: #18233c;
+  --surface-hover: #1b2844;
+  --border-default: #23314f;
+  --border-strong: #32446a;
+  --text-primary: #f1f5f9;
+  --text-secondary: #b2bdd2;
+  --text-muted: #8a97b1;
+
+  --status-success: #34d399;
+  --status-success-bg: rgba(30, 158, 106, 0.16);
+  --status-success-border: rgba(52, 211, 153, 0.35);
+  --status-warning: #fbbf24;
+  --status-warning-bg: rgba(227, 160, 8, 0.16);
+  --status-warning-border: rgba(251, 191, 36, 0.35);
+  --status-error: #f87171;
+  --status-error-bg: rgba(214, 69, 69, 0.16);
+  --status-error-border: rgba(248, 113, 113, 0.35);
+  --status-info: #8fa2ff;
+  --status-info-bg: rgba(37, 54, 168, 0.25);
+  --status-info-border: rgba(143, 162, 255, 0.35);
+
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.3), 0 10px 24px -12px rgba(0, 0, 0, 0.45);
+  --shadow-elevated: 0 18px 40px -12px rgba(0, 0, 0, 0.65);
+}

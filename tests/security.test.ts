@@ -33,6 +33,8 @@ test('firestore.rules bloqueia leitura pública de cadastros, valida os 16 campo
 
   // Regras de /termos, /usuarios e /auditoria
   assert.match(rulesText, /match \/termos\/\{termoId\}[\s\S]*allow update:\s*if false;/);
+  assert.match(rulesText, /data\.documentosSelecionados is list/);
+  assert.match(rulesText, /data\.documentosSelecionados\.size\(\) >= 1/);
   assert.match(rulesText, /match \/usuarios\/\{uid\}/);
   assert.match(rulesText, /allow list:\s*if admin\(\);/);
   assert.match(rulesText, /match \/auditoria\/\{auditoriaId\}/);

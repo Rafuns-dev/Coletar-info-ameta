@@ -6,6 +6,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  limit,
   onSnapshot,
   orderBy,
   query,
@@ -128,6 +129,9 @@ function mapTermoDoc(id: string, data: Record<string, unknown>): DiscountTermHis
     installmentValueDisplay: String(data.valorParcela || ''),
     startMonthYear: String(data.mesAnoInicio || ''),
     localDate: String(data.localData || ''),
+    selectedDocuments: Array.isArray(data.documentosSelecionados)
+      ? data.documentosSelecionados.map((item) => String(item))
+      : [],
     templateFields: (data.camposTemplate || {}) as DiscountTermTemplateFields,
     generatedByUserId: String(data.geradoPorUid || ''),
     generatedByName: String(data.geradoPorNome || ''),
@@ -511,6 +515,28 @@ export function subscribeToTermosByCadastro(
   );
 }
 
+export async function getLatestTermDocumentsByCadastro(
+  cadastroId: string
+): Promise<string[]> {
+  const path = 'termos';
+  try {
+    const q = query(
+      collection(db, path),
+      where('cadastroId', '==', cadastroId),
+      orderBy('criadoEm', 'desc'),
+      limit(1)
+    );
+    const snap = await getDocs(q);
+    if (snap.empty) return [];
+    const data = snap.docs[0].data();
+    return Array.isArray(data.documentosSelecionados)
+      ? data.documentosSelecionados.map((item) => String(item))
+      : [];
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, path);
+  }
+}
+
 export async function createTermoWithAudit(params: {
   cadastroId: string;
   input: DiscountTermGenerateInput;
@@ -519,6 +545,19 @@ export async function createTermoWithAudit(params: {
   const path = 'termos';
   const termoRef = doc(collection(db, path));
   const nowIso = new Date().toISOString();
+  const cleanDocuments = params.input.selectedDocuments
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 40);
+
+  if (cleanDocuments.length === 0) {
+    throw new Error('Selecione pelo menos um documento para gerar o termo.');
+  }
+
+  const auditResumo = `Documentos (${cleanDocuments.length}): ${cleanDocuments.join('; ')}`.slice(
+    0,
+    400
+  );
 
   try {
     await setDoc(termoRef, {
@@ -531,6 +570,7 @@ export async function createTermoWithAudit(params: {
       valorParcela: params.input.installmentValueDisplay,
       mesAnoInicio: params.input.startMonthYear,
       localData: params.input.localDate,
+      documentosSelecionados: cleanDocuments,
       camposTemplate: params.input.templateFields,
       formatoInicial: params.input.requestedFormat,
       geradoPorUid: params.actor.uid,
@@ -554,6 +594,7 @@ export async function createTermoWithAudit(params: {
         valorTotal: params.input.totalValueDisplay || 'Em branco',
         formaAbatimento: params.input.paymentMode,
         razaoSocial: params.input.contractorCompanyName || 'Em branco',
+        resumo: auditResumo,
       },
     });
 
@@ -568,6 +609,7 @@ export async function createTermoWithAudit(params: {
       installmentValueDisplay: params.input.installmentValueDisplay,
       startMonthYear: params.input.startMonthYear,
       localDate: params.input.localDate,
+      selectedDocuments: cleanDocuments,
       templateFields: params.input.templateFields,
       generatedByUserId: params.actor.uid,
       generatedByName: params.actor.nome,
@@ -611,6 +653,50 @@ export function subscribeToAuditoriaByCadastro(
     where('cadastroId', '==', cadastroId),
     orderBy('criadoEm', 'desc')
   );
+
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      onData(snapshot.docs.map((d) => mapAuditoriaDoc(d.id, d.data())));
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.LIST, path);
+      } catch (wrapped) {
+        onError(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+      }
+    }
+  );
+}
+
+export function subscribeToAllTermos(
+  onData: (items: DiscountTermHistoryItem[]) => void,
+  onError: (error: Error) => void
+): Unsubscribe {
+  const path = 'termos';
+  const q = query(collection(db, path), orderBy('criadoEm', 'desc'), limit(300));
+
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      onData(snapshot.docs.map((d) => mapTermoDoc(d.id, d.data())));
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.LIST, path);
+      } catch (wrapped) {
+        onError(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+      }
+    }
+  );
+}
+
+export function subscribeToAllAuditoria(
+  onData: (items: AuditLogItem[]) => void,
+  onError: (error: Error) => void
+): Unsubscribe {
+  const path = 'auditoria';
+  const q = query(collection(db, path), orderBy('criadoEm', 'desc'), limit(250));
 
   return onSnapshot(
     q,
