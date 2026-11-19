@@ -7,6 +7,7 @@ import { auth, authPersistenceReady } from './firebase.ts';
 import { AdminDashboardPage } from './pages/AdminDashboardPage.tsx';
 import { AdminDetailPage } from './pages/AdminDetailPage.tsx';
 import { AdminLoginPage } from './pages/AdminLoginPage.tsx';
+import { AdminUsersPage } from './pages/AdminUsersPage.tsx';
 import { PublicFormPage } from './pages/PublicFormPage.tsx';
 import {
   recordSessionAudit,
@@ -55,48 +56,81 @@ function AppRoutes() {
     }
 
     let active = true;
+    let settled = false;
     let unsubscribe = () => {};
 
-    void authPersistenceReady.then(() => {
-      if (!active) return;
+    const safetyTimer = window.setTimeout(() => {
+      if (!active || settled) return;
+      settled = true;
+      setAuthChecked(true);
+    }, 4000);
 
-      unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    void authPersistenceReady
+      .catch(() => {})
+      .then(() => {
         if (!active) return;
 
-        if (!firebaseUser) {
-          setPanelUser(null);
-          setIdleWarningVisible(false);
-          setAuthChecked(true);
-          return;
-        }
+        unsubscribe = onAuthStateChanged(
+          auth,
+          async (firebaseUser) => {
+            if (!active) return;
 
-        try {
-          const profile = await resolvePanelUserProfile(firebaseUser);
-          if (!active) return;
-          if (!profile) {
-            await signOut(auth);
+            if (!firebaseUser) {
+              settled = true;
+              window.clearTimeout(safetyTimer);
+              setPanelUser(null);
+              setIdleWarningVisible(false);
+              setAuthChecked(true);
+              return;
+            }
+
+            try {
+              const profile = await Promise.race([
+                resolvePanelUserProfile(firebaseUser),
+                new Promise<null>((_, reject) => {
+                  window.setTimeout(() => reject(new Error('timeout')), 6000);
+                }),
+              ]);
+              if (!active) return;
+              settled = true;
+              window.clearTimeout(safetyTimer);
+              if (!profile) {
+                await signOut(auth).catch(() => {});
+                setPanelUser(null);
+                setLoginNotice('Acesso não autorizado.');
+              } else {
+                lastActivityRef.current = Date.now();
+                setLoginNotice(null);
+                setPanelUser(profile);
+              }
+            } catch {
+              if (!active) return;
+              settled = true;
+              window.clearTimeout(safetyTimer);
+              await signOut(auth).catch(() => {});
+              setPanelUser(null);
+              setLoginNotice('Não foi possível validar sua sessão. Entre novamente.');
+            } finally {
+              if (active) {
+                settled = true;
+                window.clearTimeout(safetyTimer);
+                setAuthChecked(true);
+              }
+            }
+          },
+          () => {
+            if (!active) return;
+            settled = true;
+            window.clearTimeout(safetyTimer);
             setPanelUser(null);
-            setLoginNotice('Acesso não autorizado.');
-          } else {
-            lastActivityRef.current = Date.now();
-            setLoginNotice(null);
-            setPanelUser(profile);
-          }
-        } catch {
-          if (!active) return;
-          await signOut(auth).catch(() => {});
-          setPanelUser(null);
-          setLoginNotice('Acesso não autorizado.');
-        } finally {
-          if (active) {
             setAuthChecked(true);
           }
-        }
+        );
       });
-    });
 
     return () => {
       active = false;
+      window.clearTimeout(safetyTimer);
       unsubscribe();
     };
   }, [isAdminRoute]);
@@ -263,6 +297,21 @@ function AppRoutes() {
     return (
       <>
         <AdminDashboardPage
+          user={panelUser}
+          isDark={isDark}
+          onToggleTheme={toggleTheme}
+          onLogout={() => void performLogout('manual')}
+          onNavigate={navigate}
+        />
+        {idleWarningBanner}
+      </>
+    );
+  }
+
+  if (pathname === '/admin/usuarios' && panelUser.role === 'admin') {
+    return (
+      <>
+        <AdminUsersPage
           user={panelUser}
           isDark={isDark}
           onToggleTheme={toggleTheme}

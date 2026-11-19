@@ -41,13 +41,21 @@ export const db: Firestore =
 export const auth: Auth = getAuth(app);
 
 /**
- * Persistência restrita à aba/sessão do navegador (encerra ao fechar a aba).
+ * Persistência restrita à aba/sessão do navegador (encerra ao fechar a aba),
+ * com timeout de segurança para nunca travar o carregamento da tela de login.
  */
 export const authPersistenceReady: Promise<void> =
   typeof window !== 'undefined'
-    ? setPersistence(auth, browserSessionPersistence).catch((err) => {
-        console.warn('Não foi possível configurar browserSessionPersistence:', err);
-      })
+    ? Promise.race([
+        Promise.resolve()
+          .then(() => setPersistence(auth, browserSessionPersistence))
+          .catch((err) => {
+            console.warn('Não foi possível configurar browserSessionPersistence:', err);
+          }),
+        new Promise<void>((resolve) => {
+          window.setTimeout(resolve, 1500);
+        }),
+      ])
     : Promise.resolve();
 
 if (typeof window !== 'undefined' && recaptchaSiteKey.trim()) {
@@ -142,26 +150,34 @@ function generateRandomTempPassword(length = 28): string {
 
 /**
  * Cria um novo usuário no Firebase Authentication usando uma segunda instância do Firebase App,
- * evitando desconectar o administrador logado na sessão principal, e envia automaticamente o e-mail
- * para que o novo usuário defina sua própria senha.
+ * evitando desconectar o administrador logado na sessão principal. Pode enviar automaticamente
+ * o e-mail de definição de senha ou utilizar uma senha inicial definida pelo administrador.
  */
 export async function createSecondaryAuthUserAndSendPasswordSetup(
-  email: string
-): Promise<{ uid: string; email: string }> {
+  email: string,
+  initialPassword?: string
+): Promise<{ uid: string; email: string; passwordSetupEmailSent: boolean }> {
   const secondaryAppName = `ameta-user-provisioner-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const secondaryApp = initializeApp(envConfig, secondaryAppName);
   const secondaryAuth = getAuth(secondaryApp);
 
   try {
     await setPersistence(secondaryAuth, browserSessionPersistence).catch(() => {});
-    const tempPassword = generateRandomTempPassword();
-    const credential = await createUserWithEmailAndPassword(secondaryAuth, email, tempPassword);
+    const useManualPassword = Boolean(initialPassword && initialPassword.length > 0);
+    const passwordToUse = useManualPassword ? initialPassword! : generateRandomTempPassword();
+    const credential = await createUserWithEmailAndPassword(secondaryAuth, email, passwordToUse);
     const uid = credential.user.uid;
     const createdEmail = credential.user.email || email;
 
-    await sendPasswordResetEmail(secondaryAuth, createdEmail);
+    if (!useManualPassword) {
+      await sendPasswordResetEmail(secondaryAuth, createdEmail);
+    }
     await signOut(secondaryAuth);
-    return { uid, email: createdEmail };
+    return {
+      uid,
+      email: createdEmail,
+      passwordSetupEmailSent: !useManualPassword,
+    };
   } finally {
     await deleteApp(secondaryApp).catch(() => {});
   }

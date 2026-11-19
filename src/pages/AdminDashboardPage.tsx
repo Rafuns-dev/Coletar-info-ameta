@@ -18,7 +18,6 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AmetaLogo } from '../components/AmetaLogo.tsx';
 import { RegistrationFullscreenModal } from '../components/RegistrationFullscreenModal.tsx';
-import { TeamManagementModal } from '../components/TeamManagementModal.tsx';
 import { ThemeToggle } from '../components/ThemeToggle.tsx';
 import {
   extractFriendlyFirestoreMessage,
@@ -210,7 +209,6 @@ export function AdminDashboardPage({
   const [retryCounter, setRetryCounter] = useState(0);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [exportingPdf, setExportingPdf] = useState(false);
-  const [teamModalOpen, setTeamModalOpen] = useState(false);
   const [newArrivalToast, setNewArrivalToast] = useState<{
     id: string;
     fullName: string;
@@ -561,12 +559,33 @@ export function AdminDashboardPage({
             >
               <AmetaLogo size="sm" />
             </a>
-            <span aria-hidden="true" className="text-slate-300 dark:text-slate-700 hidden sm:inline">
-              /
-            </span>
-            <span className="text-sm font-medium text-slate-600 dark:text-slate-300 truncate hidden sm:inline">
-              Cadastros de Prestadores
-            </span>
+            {user.role === 'admin' && (
+              <nav aria-label="Navegação administrativa" className="hidden sm:flex items-center gap-1 ml-2">
+                <span className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#0F2942] text-white dark:bg-slate-100 dark:text-[#0F2942]">
+                  Cadastros
+                </span>
+                <a
+                  href="/admin/usuarios"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onNavigate('/admin/usuarios');
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                >
+                  Usuários e Acessos
+                </a>
+              </nav>
+            )}
+            {user.role !== 'admin' && (
+              <>
+                <span aria-hidden="true" className="text-slate-300 dark:text-slate-700 hidden sm:inline">
+                  /
+                </span>
+                <span className="text-sm font-medium text-slate-600 dark:text-slate-300 truncate hidden sm:inline">
+                  Cadastros de Prestadores
+                </span>
+              </>
+            )}
           </div>
 
           <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
@@ -576,11 +595,11 @@ export function AdminDashboardPage({
             {user.role === 'admin' && (
               <button
                 type="button"
-                onClick={() => setTeamModalOpen(true)}
-                className="inline-flex h-10 items-center gap-1.5 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors whitespace-nowrap shrink-0"
+                onClick={() => onNavigate('/admin/usuarios')}
+                className="inline-flex sm:hidden h-10 items-center gap-1.5 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors whitespace-nowrap shrink-0"
               >
                 <Users className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>Usuários</span>
+                <span>Acessos</span>
               </button>
             )}
             <a
@@ -1233,13 +1252,6 @@ export function AdminDashboardPage({
         />
       )}
 
-      {/* Gerenciamento de usuários (somente administrador) */}
-      {teamModalOpen && user.role === 'admin' && (
-        <TeamManagementModal
-          currentUser={user}
-          onClose={() => setTeamModalOpen(false)}
-        />
-      )}
     </div>
   );
 }

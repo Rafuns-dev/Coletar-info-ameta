@@ -198,6 +198,11 @@ export async function recordAuditLog(params: {
   detalhes?: Record<string, string>;
 }): Promise<void> {
   const path = 'auditoria';
+  const rawDetalhes = params.detalhes ?? {};
+  const sanitizedDetalhes =
+    typeof rawDetalhes.resumo === 'string'
+      ? { ...rawDetalhes, resumo: rawDetalhes.resumo.slice(0, 400) }
+      : rawDetalhes;
   try {
     await addDoc(collection(db, path), {
       acao: params.acao,
@@ -207,7 +212,7 @@ export async function recordAuditLog(params: {
       uid: params.actor.uid,
       nome: params.actor.nome,
       email: params.actor.email,
-      detalhes: params.detalhes ?? {},
+      detalhes: sanitizedDetalhes,
       criadoEm: serverTimestamp(),
     });
   } catch (error) {
@@ -650,12 +655,16 @@ export async function createPanelUser(params: {
   nome: string;
   email: string;
   role: PanelUserRole;
+  initialPassword?: string;
   actor: PanelUserProfile;
-}): Promise<PanelUserProfile> {
+}): Promise<PanelUserProfile & { passwordSetupEmailSent: boolean }> {
   const cleanEmail = params.email.trim().toLowerCase();
   const cleanNome = params.nome.trim();
 
-  const { uid } = await createSecondaryAuthUserAndSendPasswordSetup(cleanEmail);
+  const { uid, passwordSetupEmailSent } = await createSecondaryAuthUserAndSendPasswordSetup(
+    cleanEmail,
+    params.initialPassword
+  );
   const path = `usuarios/${uid}`;
 
   try {
@@ -674,7 +683,9 @@ export async function createPanelUser(params: {
       entidadeId: uid,
       actor: params.actor,
       detalhes: {
-        resumo: `Criou acesso ${params.role} para ${cleanNome} (${cleanEmail}) e enviou e-mail de definição de senha`,
+        resumo: passwordSetupEmailSent
+          ? `Criou acesso ${params.role} para ${cleanNome} (${cleanEmail}) e enviou e-mail de definição de senha`
+          : `Criou acesso ${params.role} para ${cleanNome} (${cleanEmail}) com senha inicial definida pelo administrador`,
       },
     });
 
@@ -687,6 +698,7 @@ export async function createPanelUser(params: {
       ativo: true,
       criadoEm: nowIso,
       atualizadoEm: nowIso,
+      passwordSetupEmailSent,
     };
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, path);

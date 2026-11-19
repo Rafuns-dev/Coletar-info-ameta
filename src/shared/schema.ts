@@ -182,10 +182,31 @@ export interface PanelUserProfile {
   atualizadoEm: string;
 }
 
-export const panelUserCreateSchema = z.object({
-  nome: z.string().trim().min(2, 'Informe o nome completo do usuário.').max(150),
-  email: z.string().trim().toLowerCase().email('Informe um e-mail válido.').max(160),
+export const panelUserCreateSchema = z
+  .object({
+    nome: z.string().trim().min(2, 'Informe o nome completo da pessoa.').max(150),
+    email: z.string().trim().toLowerCase().email('Informe um e-mail válido.').max(160),
+    role: z.enum(['admin', 'operador']),
+    passwordMode: z.enum(['email', 'manual']).default('email'),
+    initialPassword: z.string().max(128).optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.passwordMode === 'manual') {
+      const pwd = data.initialPassword ?? '';
+      if (pwd.length < 10) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['initialPassword'],
+          message: 'A senha inicial deve ter pelo menos 10 caracteres.',
+        });
+      }
+    }
+  });
+
+export const panelUserUpdateSchema = z.object({
+  nome: z.string().trim().min(2, 'Informe o nome completo da pessoa.').max(150),
   role: z.enum(['admin', 'operador']),
+  ativo: z.boolean(),
 });
 
 export interface DiscountTermTemplateFields {
