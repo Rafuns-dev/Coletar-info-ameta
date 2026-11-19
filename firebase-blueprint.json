@@ -1,0 +1,388 @@
+{
+  "entities": {
+    "Cadastro": {
+      "title": "Cadastro de Prestador PJ",
+      "description": "Dados iniciais de primeiro contato de prestadores de serviço PJ enviados pelo formulário público de 16 campos.",
+      "type": "object",
+      "properties": {
+        "dataCadastro": {
+          "type": "string",
+          "format": "date",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "funcao": {
+          "type": "string",
+          "enum": [
+            "Analista de documentação",
+            "Técnico de Instalação",
+            "Técnico de Vistoria"
+          ]
+        },
+        "nomeCompleto": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 150
+        },
+        "cpf": {
+          "type": "string",
+          "minLength": 14,
+          "maxLength": 14,
+          "pattern": "^[0-9]{3}\\.[0-9]{3}\\.[0-9]{3}-[0-9]{2}$"
+        },
+        "rg": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 30
+        },
+        "naturalidade": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "nacionalidade": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "estadoCivil": {
+          "type": "string",
+          "enum": [
+            "Solteiro(a)",
+            "Casado(a)",
+            "União Estável",
+            "Divorciado(a)",
+            "Separado(a)",
+            "Viúvo(a)"
+          ]
+        },
+        "dataNascimento": {
+          "type": "string",
+          "format": "date",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "cnpj": {
+          "type": "string",
+          "minLength": 18,
+          "maxLength": 18,
+          "pattern": "^[0-9]{2}\\.[0-9]{3}\\.[0-9]{3}/[0-9]{4}-[0-9]{2}$"
+        },
+        "enderecoEmpresa": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 250
+        },
+        "cepEmpresa": {
+          "type": "string",
+          "minLength": 9,
+          "maxLength": 9,
+          "pattern": "^[0-9]{5}-[0-9]{3}$"
+        },
+        "nomePai": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 150
+        },
+        "nomeMae": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 150
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 5,
+          "maxLength": 160,
+          "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+        },
+        "telefone": {
+          "type": "string",
+          "minLength": 14,
+          "maxLength": 15,
+          "pattern": "^\\([0-9]{2}\\) [0-9]{4,5}-[0-9]{4}$"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "Novo",
+            "Em análise",
+            "Dados conferidos",
+            "Concluído"
+          ]
+        },
+        "observacoes": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "visto": {
+          "type": "boolean"
+        },
+        "vistoEm": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "criadoEm": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "atualizadoEm": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "dataCadastro",
+        "funcao",
+        "nomeCompleto",
+        "cpf",
+        "rg",
+        "naturalidade",
+        "nacionalidade",
+        "estadoCivil",
+        "dataNascimento",
+        "cnpj",
+        "enderecoEmpresa",
+        "cepEmpresa",
+        "nomePai",
+        "nomeMae",
+        "email",
+        "telefone",
+        "status",
+        "observacoes",
+        "visto",
+        "vistoEm",
+        "criadoEm",
+        "atualizadoEm"
+      ]
+    },
+    "TermoDesconto": {
+      "title": "Termo de Autorização de Desconto",
+      "description": "Histórico dos termos de autorização de desconto gerados pela equipe para um cadastro.",
+      "type": "object",
+      "properties": {
+        "cadastroId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "razaoSocialContratada": {
+          "type": "string",
+          "maxLength": 250
+        },
+        "cnpjContratada": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "valorTotal": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "formaAbatimento": {
+          "type": "string",
+          "enum": ["integral", "parcelado", "blank"]
+        },
+        "numParcelas": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "valorParcela": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "mesAnoInicio": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "localData": {
+          "type": "string",
+          "maxLength": 180
+        },
+        "camposTemplate": {
+          "type": "object"
+        },
+        "formatoInicial": {
+          "type": "string",
+          "enum": ["docx", "pdf"]
+        },
+        "geradoPorUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "geradoPorNome": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "geradoPorEmail": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "criadoEm": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "cadastroId",
+        "razaoSocialContratada",
+        "cnpjContratada",
+        "valorTotal",
+        "formaAbatimento",
+        "numParcelas",
+        "valorParcela",
+        "mesAnoInicio",
+        "localData",
+        "camposTemplate",
+        "formatoInicial",
+        "geradoPorUid",
+        "geradoPorNome",
+        "geradoPorEmail",
+        "criadoEm"
+      ]
+    },
+    "UsuarioPainel": {
+      "title": "Usuário do Painel Administrativo",
+      "description": "Perfil RBAC de acesso ao painel administrativo da Ameta.",
+      "type": "object",
+      "properties": {
+        "nome": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 150
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 5,
+          "maxLength": 160
+        },
+        "perfil": {
+          "type": "string",
+          "enum": ["administrador", "operador"]
+        },
+        "ativo": {
+          "type": "boolean"
+        },
+        "criadoEm": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "atualizadoEm": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "nome",
+        "email",
+        "perfil",
+        "ativo",
+        "criadoEm",
+        "atualizadoEm"
+      ]
+    },
+    "AuditoriaEvento": {
+      "title": "Registro de Auditoria",
+      "description": "Trilha imutável de ações realizadas pela equipe no painel.",
+      "type": "object",
+      "properties": {
+        "acao": {
+          "type": "string",
+          "enum": [
+            "ABRIU_CADASTRO",
+            "EDITOU_CADASTRO",
+            "ALTEROU_STATUS",
+            "SALVOU_OBSERVACOES",
+            "EXCLUIU_CADASTRO",
+            "GEROU_TERMO_DOCX",
+            "GEROU_TERMO_PDF",
+            "REBAIXOU_TERMO_DOCX",
+            "REBAIXOU_TERMO_PDF",
+            "CRIOU_USUARIO",
+            "ATUALIZOU_USUARIO",
+            "REMOVEU_USUARIO"
+          ]
+        },
+        "entidade": {
+          "type": "string",
+          "enum": ["cadastros", "termos", "usuarios"]
+        },
+        "entidadeId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "cadastroId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "atorUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "atorNome": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "atorEmail": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "detalhes": {
+          "type": "object"
+        },
+        "criadoEm": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "acao",
+        "entidade",
+        "entidadeId",
+        "cadastroId",
+        "atorUid",
+        "atorNome",
+        "atorEmail",
+        "detalhes",
+        "criadoEm"
+      ]
+    }
+  },
+  "firestore": {
+    "/cadastros/{cadastroId}": {
+      "schema": {
+        "$ref": "#/entities/Cadastro"
+      },
+      "description": "Coleção principal com os 16 campos do prestador e metadados operacionais."
+    },
+    "/termos/{termoId}": {
+      "schema": {
+        "$ref": "#/entities/TermoDesconto"
+      },
+      "description": "Histórico de Termos de Autorização de Desconto gerados."
+    },
+    "/usuarios/{usuarioId}": {
+      "schema": {
+        "$ref": "#/entities/UsuarioPainel"
+      },
+      "description": "Perfis autorizados do painel (administrador e operador)."
+    },
+    "/auditoria/{auditoriaId}": {
+      "schema": {
+        "$ref": "#/entities/AuditoriaEvento"
+      },
+      "description": "Trilha de auditoria append-only legível apenas por administradores."
+    }
+  }
+}

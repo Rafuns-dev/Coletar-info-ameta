@@ -1,0 +1,95 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "cadastros",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "funcao", "order": "ASCENDING" },
+        { "fieldPath": "dataCadastro", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "cadastros",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "funcao", "order": "ASCENDING" },
+        { "fieldPath": "dataCadastro", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "cadastros",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "dataCadastro", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "cadastros",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "nomeCompleto", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "cadastros",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "estadoCivil", "order": "ASCENDING" },
+        { "fieldPath": "dataCadastro", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "cadastros",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "visto", "order": "ASCENDING" },
+        { "fieldPath": "dataCadastro", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "cadastros",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "visto", "order": "ASCENDING" },
+        { "fieldPath": "criadoEm", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "cadastros",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "funcao", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "dataCadastro", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "termos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "cadastroId", "order": "ASCENDING" },
+        { "fieldPath": "criadoEm", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "auditoria",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "cadastroId", "order": "ASCENDING" },
+        { "fieldPath": "criadoEm", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "auditoria",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "entidade", "order": "ASCENDING" },
+        { "fieldPath": "entidadeId", "order": "ASCENDING" },
+        { "fieldPath": "criadoEm", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

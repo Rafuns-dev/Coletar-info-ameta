@@ -1,0 +1,509 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Rede de segurança padrão: negar tudo que não for explicitamente liberado
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ==================== PRIMITIVAS GLOBAIS ====================
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string
+        && id.size() >= 1
+        && id.size() <= 128
+        && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isBootstrappedAdmin() {
+      return isSignedIn()
+        && request.auth.token.email == 'blabluki@gmail.com'
+        && request.auth.token.email_verified == true;
+    }
+
+    function hasUserProfile() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/usuarios/$(request.auth.uid));
+    }
+
+    function userProfile() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data;
+    }
+
+    function isPanelUser() {
+      return isBootstrappedAdmin()
+        || (
+          hasUserProfile()
+          && userProfile().ativo == true
+          && (userProfile().perfil == 'administrador' || userProfile().perfil == 'operador')
+        );
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin()
+        || (
+          hasUserProfile()
+          && userProfile().ativo == true
+          && userProfile().perfil == 'administrador'
+        );
+    }
+
+    // ==================== VALIDAÇÕES DE ESQUEMA ====================
+
+    function isValidCpfFormat(cpf) {
+      return cpf is string
+        && cpf.size() == 14
+        && cpf.matches('^[0-9]{3}\\.[0-9]{3}\\.[0-9]{3}-[0-9]{2}$')
+        && !cpf.matches('^(0{3}\\.0{3}\\.0{3}-0{2}|1{3}\\.1{3}\\.1{3}-1{2}|2{3}\\.2{3}\\.2{3}-2{2}|3{3}\\.3{3}\\.3{3}-3{2}|4{3}\\.4{3}\\.4{3}-4{2}|5{3}\\.5{3}\\.5{3}-5{2}|6{3}\\.6{3}\\.6{3}-6{2}|7{3}\\.7{3}\\.7{3}-7{2}|8{3}\\.8{3}\\.8{3}-8{2}|9{3}\\.9{3}\\.9{3}-9{2})$');
+    }
+
+    function isValidCnpjFormat(cnpj) {
+      return cnpj is string
+        && cnpj.size() == 18
+        && cnpj.matches('^[0-9]{2}\\.[0-9]{3}\\.[0-9]{3}/[0-9]{4}-[0-9]{2}$')
+        && !cnpj.matches('^(0{2}\\.0{3}\\.0{3}/0{4}-0{2}|1{2}\\.1{3}\\.1{3}/1{4}-1{2}|2{2}\\.2{3}\\.2{3}/2{4}-2{2}|3{2}\\.3{3}\\.3{3}/3{4}-3{2}|4{2}\\.4{3}\\.4{3}/4{4}-4{2}|5{2}\\.5{3}\\.5{3}/5{4}-5{2}|6{2}\\.6{3}\\.6{3}/6{4}-6{2}|7{2}\\.7{3}\\.7{3}/7{4}-7{2}|8{2}\\.8{3}\\.8{3}/8{4}-8{2}|9{2}\\.9{3}\\.9{3}/9{4}-9{2})$');
+    }
+
+    function isValidCadastro(data) {
+      return data.keys().hasAll([
+        'dataCadastro',
+        'funcao',
+        'nomeCompleto',
+        'cpf',
+        'rg',
+        'naturalidade',
+        'nacionalidade',
+        'estadoCivil',
+        'dataNascimento',
+        'cnpj',
+        'enderecoEmpresa',
+        'cepEmpresa',
+        'nomePai',
+        'nomeMae',
+        'email',
+        'telefone',
+        'status',
+        'observacoes',
+        'visto',
+        'vistoEm',
+        'criadoEm',
+        'atualizadoEm'
+      ])
+      && data.keys().hasOnly([
+        'dataCadastro',
+        'funcao',
+        'nomeCompleto',
+        'cpf',
+        'rg',
+        'naturalidade',
+        'nacionalidade',
+        'estadoCivil',
+        'dataNascimento',
+        'cnpj',
+        'enderecoEmpresa',
+        'cepEmpresa',
+        'nomePai',
+        'nomeMae',
+        'email',
+        'telefone',
+        'status',
+        'observacoes',
+        'visto',
+        'vistoEm',
+        'criadoEm',
+        'atualizadoEm'
+      ])
+      && data.dataCadastro is string
+      && data.dataCadastro.size() == 10
+      && data.dataCadastro.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+      && data.funcao is string
+      && data.funcao in [
+        'Analista de documentação',
+        'Técnico de Instalação',
+        'Técnico de Vistoria'
+      ]
+      && data.nomeCompleto is string
+      && data.nomeCompleto.size() >= 3
+      && data.nomeCompleto.size() <= 150
+      && isValidCpfFormat(data.cpf)
+      && data.rg is string
+      && data.rg.size() >= 5
+      && data.rg.size() <= 30
+      && data.naturalidade is string
+      && data.naturalidade.size() >= 2
+      && data.naturalidade.size() <= 120
+      && data.nacionalidade is string
+      && data.nacionalidade.size() >= 2
+      && data.nacionalidade.size() <= 80
+      && data.estadoCivil is string
+      && data.estadoCivil in [
+        'Solteiro(a)',
+        'Casado(a)',
+        'União Estável',
+        'Divorciado(a)',
+        'Separado(a)',
+        'Viúvo(a)'
+      ]
+      && data.dataNascimento is string
+      && data.dataNascimento.size() == 10
+      && data.dataNascimento.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+      && isValidCnpjFormat(data.cnpj)
+      && data.enderecoEmpresa is string
+      && data.enderecoEmpresa.size() >= 5
+      && data.enderecoEmpresa.size() <= 250
+      && data.cepEmpresa is string
+      && data.cepEmpresa.size() == 9
+      && data.cepEmpresa.matches('^[0-9]{5}-[0-9]{3}$')
+      && data.nomePai is string
+      && data.nomePai.size() >= 3
+      && data.nomePai.size() <= 150
+      && data.nomeMae is string
+      && data.nomeMae.size() >= 3
+      && data.nomeMae.size() <= 150
+      && data.email is string
+      && data.email.size() >= 5
+      && data.email.size() <= 160
+      && data.email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$')
+      && data.telefone is string
+      && data.telefone.size() >= 14
+      && data.telefone.size() <= 15
+      && data.telefone.matches('^\\([0-9]{2}\\) [0-9]{4,5}-[0-9]{4}$')
+      && data.status is string
+      && data.status in ['Novo', 'Em análise', 'Dados conferidos', 'Concluído']
+      && data.observacoes is string
+      && data.observacoes.size() <= 4000
+      && data.visto is bool
+      && (data.vistoEm == null || data.vistoEm is timestamp)
+      && data.criadoEm is timestamp
+      && data.atualizadoEm is timestamp;
+    }
+
+    function isValidCamposTemplate(campos) {
+      return campos is map
+        && campos.keys().hasAll([
+          'CONTRATADA_RAZAO_SOCIAL',
+          'CONTRATADA_CNPJ',
+          'CONTRATADA_ENDERECO',
+          'VALOR_TOTAL',
+          'VALOR_EXTENSO',
+          'MARCA_INTEGRAL',
+          'MARCA_PARCELADO',
+          'NUM_PARCELAS',
+          'NUM_PARCELAS_EXTENSO',
+          'VALOR_PARCELA',
+          'MES_ANO_INICIO',
+          'LOCAL_DATA'
+        ])
+        && campos.keys().hasOnly([
+          'CONTRATADA_RAZAO_SOCIAL',
+          'CONTRATADA_CNPJ',
+          'CONTRATADA_ENDERECO',
+          'VALOR_TOTAL',
+          'VALOR_EXTENSO',
+          'MARCA_INTEGRAL',
+          'MARCA_PARCELADO',
+          'NUM_PARCELAS',
+          'NUM_PARCELAS_EXTENSO',
+          'VALOR_PARCELA',
+          'MES_ANO_INICIO',
+          'LOCAL_DATA'
+        ])
+        && campos.CONTRATADA_RAZAO_SOCIAL is string && campos.CONTRATADA_RAZAO_SOCIAL.size() <= 250
+        && campos.CONTRATADA_CNPJ is string && campos.CONTRATADA_CNPJ.size() <= 40
+        && campos.CONTRATADA_ENDERECO is string && campos.CONTRATADA_ENDERECO.size() <= 350
+        && campos.VALOR_TOTAL is string && campos.VALOR_TOTAL.size() <= 60
+        && campos.VALOR_EXTENSO is string && campos.VALOR_EXTENSO.size() <= 300
+        && campos.MARCA_INTEGRAL is string && campos.MARCA_INTEGRAL.size() <= 10
+        && campos.MARCA_PARCELADO is string && campos.MARCA_PARCELADO.size() <= 10
+        && campos.NUM_PARCELAS is string && campos.NUM_PARCELAS.size() <= 30
+        && campos.NUM_PARCELAS_EXTENSO is string && campos.NUM_PARCELAS_EXTENSO.size() <= 120
+        && campos.VALOR_PARCELA is string && campos.VALOR_PARCELA.size() <= 60
+        && campos.MES_ANO_INICIO is string && campos.MES_ANO_INICIO.size() <= 60
+        && campos.LOCAL_DATA is string && campos.LOCAL_DATA.size() <= 180;
+    }
+
+    function isValidTermo(data) {
+      return data.keys().hasAll([
+        'cadastroId',
+        'razaoSocialContratada',
+        'cnpjContratada',
+        'valorTotal',
+        'formaAbatimento',
+        'numParcelas',
+        'valorParcela',
+        'mesAnoInicio',
+        'localData',
+        'camposTemplate',
+        'formatoInicial',
+        'geradoPorUid',
+        'geradoPorNome',
+        'geradoPorEmail',
+        'criadoEm'
+      ])
+      && data.keys().hasOnly([
+        'cadastroId',
+        'razaoSocialContratada',
+        'cnpjContratada',
+        'valorTotal',
+        'formaAbatimento',
+        'numParcelas',
+        'valorParcela',
+        'mesAnoInicio',
+        'localData',
+        'camposTemplate',
+        'formatoInicial',
+        'geradoPorUid',
+        'geradoPorNome',
+        'geradoPorEmail',
+        'criadoEm'
+      ])
+      && isValidId(data.cadastroId)
+      && data.razaoSocialContratada is string && data.razaoSocialContratada.size() <= 250
+      && data.cnpjContratada is string && data.cnpjContratada.size() <= 40
+      && data.valorTotal is string && data.valorTotal.size() <= 40
+      && data.formaAbatimento is string && data.formaAbatimento in ['integral', 'parcelado', 'blank']
+      && data.numParcelas is string && data.numParcelas.size() <= 20
+      && data.valorParcela is string && data.valorParcela.size() <= 40
+      && data.mesAnoInicio is string && data.mesAnoInicio.size() <= 40
+      && data.localData is string && data.localData.size() <= 180
+      && isValidCamposTemplate(data.camposTemplate)
+      && data.formatoInicial is string && data.formatoInicial in ['docx', 'pdf']
+      && isValidId(data.geradoPorUid)
+      && data.geradoPorNome is string && data.geradoPorNome.size() >= 1 && data.geradoPorNome.size() <= 150
+      && data.geradoPorEmail is string && data.geradoPorEmail.size() >= 3 && data.geradoPorEmail.size() <= 160
+      && data.criadoEm is timestamp;
+    }
+
+    function isValidUsuario(data) {
+      return data.keys().hasAll([
+        'nome',
+        'email',
+        'perfil',
+        'ativo',
+        'criadoEm',
+        'atualizadoEm'
+      ])
+      && data.keys().hasOnly([
+        'nome',
+        'email',
+        'perfil',
+        'ativo',
+        'criadoEm',
+        'atualizadoEm'
+      ])
+      && data.nome is string && data.nome.size() >= 2 && data.nome.size() <= 150
+      && data.email is string && data.email.size() >= 5 && data.email.size() <= 160
+      && data.email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$')
+      && data.perfil is string && data.perfil in ['administrador', 'operador']
+      && data.ativo is bool
+      && data.criadoEm is timestamp
+      && data.atualizadoEm is timestamp;
+    }
+
+    function isValidAuditoriaDetalhes(detalhes) {
+      return detalhes is map
+        && detalhes.keys().hasOnly([
+          'formato',
+          'valorTotal',
+          'formaAbatimento',
+          'razaoSocial',
+          'statusAnterior',
+          'statusNovo',
+          'termoId',
+          'resumo'
+        ])
+        && (!('formato' in detalhes) || (detalhes.formato is string && detalhes.formato.size() <= 20))
+        && (!('valorTotal' in detalhes) || (detalhes.valorTotal is string && detalhes.valorTotal.size() <= 40))
+        && (!('formaAbatimento' in detalhes) || (detalhes.formaAbatimento is string && detalhes.formaAbatimento.size() <= 30))
+        && (!('razaoSocial' in detalhes) || (detalhes.razaoSocial is string && detalhes.razaoSocial.size() <= 250))
+        && (!('statusAnterior' in detalhes) || (detalhes.statusAnterior is string && detalhes.statusAnterior.size() <= 40))
+        && (!('statusNovo' in detalhes) || (detalhes.statusNovo is string && detalhes.statusNovo.size() <= 40))
+        && (!('termoId' in detalhes) || (detalhes.termoId is string && detalhes.termoId.size() <= 128))
+        && (!('resumo' in detalhes) || (detalhes.resumo is string && detalhes.resumo.size() <= 400));
+    }
+
+    function isValidAuditoria(data) {
+      return data.keys().hasAll([
+        'acao',
+        'entidade',
+        'entidadeId',
+        'cadastroId',
+        'atorUid',
+        'atorNome',
+        'atorEmail',
+        'detalhes',
+        'criadoEm'
+      ])
+      && data.keys().hasOnly([
+        'acao',
+        'entidade',
+        'entidadeId',
+        'cadastroId',
+        'atorUid',
+        'atorNome',
+        'atorEmail',
+        'detalhes',
+        'criadoEm'
+      ])
+      && data.acao is string
+      && data.acao in [
+        'ABRIU_CADASTRO',
+        'EDITOU_CADASTRO',
+        'ALTEROU_STATUS',
+        'SALVOU_OBSERVACOES',
+        'EXCLUIU_CADASTRO',
+        'GEROU_TERMO_DOCX',
+        'GEROU_TERMO_PDF',
+        'REBAIXOU_TERMO_DOCX',
+        'REBAIXOU_TERMO_PDF',
+        'CRIOU_USUARIO',
+        'ATUALIZOU_USUARIO',
+        'REMOVEU_USUARIO'
+      ]
+      && data.entidade is string
+      && data.entidade in ['cadastros', 'termos', 'usuarios']
+      && isValidId(data.entidadeId)
+      && data.cadastroId is string && data.cadastroId.size() <= 128
+      && isValidId(data.atorUid)
+      && data.atorNome is string && data.atorNome.size() >= 1 && data.atorNome.size() <= 150
+      && data.atorEmail is string && data.atorEmail.size() >= 3 && data.atorEmail.size() <= 160
+      && isValidAuditoriaDetalhes(data.detalhes)
+      && data.criadoEm is timestamp;
+    }
+
+    // ==================== REGRAS DAS COLEÇÕES ====================
+
+    match /cadastros/{cadastroId} {
+      allow get, list: if isPanelUser();
+
+      // Visitante público só pode criar novo cadastro com os 16 campos e estado inicial fixo
+      allow create: if isValidId(cadastroId)
+        && isValidCadastro(incoming())
+        && incoming().status == 'Novo'
+        && incoming().observacoes == ''
+        && incoming().visto == false
+        && incoming().vistoEm == null
+        && incoming().criadoEm == request.time
+        && incoming().atualizadoEm == request.time;
+
+      allow update: if isPanelUser()
+        && isValidId(cadastroId)
+        && isValidCadastro(incoming())
+        && incoming().criadoEm == existing().criadoEm
+        && incoming().atualizadoEm == request.time
+        && (
+          isAdmin()
+          || incoming().diff(existing()).affectedKeys().hasOnly([
+            'dataCadastro',
+            'funcao',
+            'nomeCompleto',
+            'cpf',
+            'rg',
+            'naturalidade',
+            'nacionalidade',
+            'estadoCivil',
+            'dataNascimento',
+            'cnpj',
+            'enderecoEmpresa',
+            'cepEmpresa',
+            'nomePai',
+            'nomeMae',
+            'email',
+            'telefone',
+            'status',
+            'observacoes',
+            'visto',
+            'vistoEm',
+            'atualizadoEm'
+          ])
+        );
+
+      allow delete: if isAdmin() && isValidId(cadastroId);
+    }
+
+    match /termos/{termoId} {
+      allow get, list: if isPanelUser();
+
+      allow create: if isPanelUser()
+        && isValidId(termoId)
+        && isValidTermo(incoming())
+        && incoming().geradoPorUid == request.auth.uid
+        && incoming().criadoEm == request.time
+        && exists(/databases/$(database)/documents/cadastros/$(incoming().cadastroId));
+
+      allow update: if isPanelUser()
+        && isValidId(termoId)
+        && isValidTermo(incoming())
+        && incoming().cadastroId == existing().cadastroId
+        && incoming().geradoPorUid == existing().geradoPorUid
+        && incoming().criadoEm == existing().criadoEm
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'razaoSocialContratada',
+          'cnpjContratada',
+          'valorTotal',
+          'formaAbatimento',
+          'numParcelas',
+          'valorParcela',
+          'mesAnoInicio',
+          'localData',
+          'camposTemplate'
+        ]);
+
+      allow delete: if isAdmin() && isValidId(termoId);
+    }
+
+    match /usuarios/{usuarioId} {
+      allow get: if isAdmin() || (isSignedIn() && request.auth.uid == usuarioId);
+      allow list: if isAdmin();
+
+      allow create: if isAdmin()
+        && isValidId(usuarioId)
+        && isValidUsuario(incoming())
+        && incoming().criadoEm == request.time
+        && incoming().atualizadoEm == request.time;
+
+      allow update: if isAdmin()
+        && isValidId(usuarioId)
+        && isValidUsuario(incoming())
+        && incoming().criadoEm == existing().criadoEm
+        && incoming().atualizadoEm == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'nome',
+          'email',
+          'perfil',
+          'ativo',
+          'atualizadoEm'
+        ]);
+
+      allow delete: if isAdmin()
+        && isValidId(usuarioId)
+        && usuarioId != request.auth.uid;
+    }
+
+    match /auditoria/{auditoriaId} {
+      allow get, list: if isAdmin();
+
+      allow create: if isPanelUser()
+        && isValidId(auditoriaId)
+        && isValidAuditoria(incoming())
+        && incoming().atorUid == request.auth.uid
+        && incoming().criadoEm == request.time;
+
+      allow update, delete: if false;
+    }
+  }
+}
