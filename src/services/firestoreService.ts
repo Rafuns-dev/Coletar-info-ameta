@@ -1,4 +1,4 @@
-import { type User } from 'firebase/auth';
+import { sendPasswordResetEmail, type User } from 'firebase/auth';
 import {
   addDoc,
   collection,
@@ -18,7 +18,8 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore';
 import {
-  createSecondaryAuthUser,
+  auth,
+  createSecondaryAuthUserAndSendPasswordSetup,
   db,
   handleFirestoreError,
   OperationType,
@@ -136,14 +137,17 @@ function mapTermoDoc(id: string, data: Record<string, unknown>): DiscountTermHis
 }
 
 function mapUsuarioDoc(uid: string, data: Record<string, unknown>): PanelUserProfile {
+  const rawRole = data.role ?? data.perfil;
+  const role: PanelUserRole =
+    rawRole === 'admin' || rawRole === 'administrador' ? 'admin' : 'operador';
   return {
     uid,
     nome: String(data.nome || ''),
     email: String(data.email || ''),
-    perfil: data.perfil === 'administrador' ? 'administrador' : 'operador',
+    role,
     ativo: Boolean(data.ativo),
     criadoEm: toIsoString(data.criadoEm),
-    atualizadoEm: toIsoString(data.atualizadoEm),
+    atualizadoEm: toIsoString(data.atualizadoEm ?? data.criadoEm),
   };
 }
 
@@ -151,12 +155,13 @@ function mapAuditoriaDoc(id: string, data: Record<string, unknown>): AuditLogIte
   return {
     id,
     acao: data.acao as AuditAction,
-    entidade: (data.entidade as 'cadastros' | 'termos' | 'usuarios') || 'cadastros',
+    entidade:
+      (data.entidade as 'sessao' | 'cadastros' | 'termos' | 'usuarios') || 'cadastros',
     entidadeId: String(data.entidadeId || ''),
     cadastroId: String(data.cadastroId || ''),
-    atorUid: String(data.atorUid || ''),
-    atorNome: String(data.atorNome || ''),
-    atorEmail: String(data.atorEmail || ''),
+    uid: String(data.uid || data.atorUid || ''),
+    nome: String(data.nome || data.atorNome || ''),
+    email: String(data.email || data.atorEmail || ''),
     detalhes: (data.detalhes || {}) as Record<string, string>,
     criadoEm: toIsoString(data.criadoEm),
   };
@@ -171,7 +176,7 @@ export function extractFriendlyFirestoreMessage(
     const parsed = JSON.parse(err.message) as { error?: string };
     if (parsed && typeof parsed.error === 'string') {
       if (parsed.error.toLowerCase().includes('permission')) {
-        return 'Permissão negada pelo Firestore. Verifique seu perfil de acesso ou as regras de segurança.';
+        return 'Acesso não autorizado ou permissão negada pelo Firestore.';
       }
       if (parsed.error.toLowerCase().includes('quota')) {
         return 'Cota diária do Firestore atingida. Tente novamente mais tarde.';
@@ -186,7 +191,7 @@ export function extractFriendlyFirestoreMessage(
 
 export async function recordAuditLog(params: {
   acao: AuditAction;
-  entidade: 'cadastros' | 'termos' | 'usuarios';
+  entidade: 'sessao' | 'cadastros' | 'termos' | 'usuarios';
   entidadeId: string;
   cadastroId?: string;
   actor: PanelUserProfile;
@@ -199,15 +204,36 @@ export async function recordAuditLog(params: {
       entidade: params.entidade,
       entidadeId: params.entidadeId,
       cadastroId: params.cadastroId ?? '',
-      atorUid: params.actor.uid,
-      atorNome: params.actor.nome,
-      atorEmail: params.actor.email,
+      uid: params.actor.uid,
+      nome: params.actor.nome,
+      email: params.actor.email,
       detalhes: params.detalhes ?? {},
       criadoEm: serverTimestamp(),
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, path);
   }
+}
+
+export async function recordSessionAudit(
+  actor: PanelUserProfile,
+  acao: 'LOGIN' | 'LOGOUT' | 'LOGOUT_INATIVIDADE'
+): Promise<void> {
+  const resumo =
+    acao === 'LOGIN'
+      ? 'Login realizado no painel administrativo'
+      : acao === 'LOGOUT_INATIVIDADE'
+        ? 'Sessão encerrada automaticamente após 30 minutos sem atividade'
+        : 'Logout manual realizado no painel';
+
+  await recordAuditLog({
+    acao,
+    entidade: 'sessao',
+    entidadeId: actor.uid,
+    cadastroId: '',
+    actor,
+    detalhes: { resumo },
+  });
 }
 
 // ==================== FORMULÁRIO PÚBLICO ====================
@@ -236,37 +262,17 @@ export async function submitPublicRegistration(
 
 // ==================== AUTENTICAÇÃO E PERFIL DO PAINEL ====================
 
-const BOOTSTRAPPED_ADMIN_EMAIL = 'blabluki@gmail.com';
-
 export async function resolvePanelUserProfile(
   firebaseUser: User
 ): Promise<PanelUserProfile | null> {
   const userPath = `usuarios/${firebaseUser.uid}`;
   try {
     const snap = await getDoc(doc(db, 'usuarios', firebaseUser.uid));
-    if (snap.exists()) {
-      const profile = mapUsuarioDoc(snap.id, snap.data());
-      return profile.ativo ? profile : null;
+    if (!snap.exists()) {
+      return null;
     }
-
-    const emailLower = (firebaseUser.email || '').toLowerCase();
-    if (emailLower === BOOTSTRAPPED_ADMIN_EMAIL && firebaseUser.emailVerified) {
-      const initialProfile = {
-        nome: firebaseUser.displayName || 'Administrador Ameta',
-        email: emailLower,
-        perfil: 'administrador' as const,
-        ativo: true,
-        criadoEm: serverTimestamp(),
-        atualizadoEm: serverTimestamp(),
-      };
-      await setDoc(doc(db, 'usuarios', firebaseUser.uid), initialProfile);
-      const createdSnap = await getDoc(doc(db, 'usuarios', firebaseUser.uid));
-      if (createdSnap.exists()) {
-        return mapUsuarioDoc(createdSnap.id, createdSnap.data());
-      }
-    }
-
-    return null;
+    const profile = mapUsuarioDoc(snap.id, snap.data());
+    return profile.ativo ? profile : null;
   } catch (error) {
     handleFirestoreError(error, OperationType.GET, userPath);
   }
@@ -616,7 +622,7 @@ export function subscribeToAuditoriaByCadastro(
   );
 }
 
-// ==================== EQUIPE / USUÁRIOS (SOMENTE ADMINISTRADOR) ====================
+// ==================== USUÁRIOS / EQUIPE (SOMENTE ADMINISTRADOR) ====================
 
 export function subscribeToPanelUsers(
   onData: (users: PanelUserProfile[]) => void,
@@ -643,21 +649,20 @@ export function subscribeToPanelUsers(
 export async function createPanelUser(params: {
   nome: string;
   email: string;
-  password: string;
-  perfil: PanelUserRole;
+  role: PanelUserRole;
   actor: PanelUserProfile;
 }): Promise<PanelUserProfile> {
   const cleanEmail = params.email.trim().toLowerCase();
   const cleanNome = params.nome.trim();
 
-  const { uid } = await createSecondaryAuthUser(cleanEmail, params.password);
+  const { uid } = await createSecondaryAuthUserAndSendPasswordSetup(cleanEmail);
   const path = `usuarios/${uid}`;
 
   try {
     await setDoc(doc(db, 'usuarios', uid), {
       nome: cleanNome,
       email: cleanEmail,
-      perfil: params.perfil,
+      role: params.role,
       ativo: true,
       criadoEm: serverTimestamp(),
       atualizadoEm: serverTimestamp(),
@@ -669,7 +674,7 @@ export async function createPanelUser(params: {
       entidadeId: uid,
       actor: params.actor,
       detalhes: {
-        resumo: `Criou acesso ${params.perfil} para ${cleanNome} (${cleanEmail})`,
+        resumo: `Criou acesso ${params.role} para ${cleanNome} (${cleanEmail}) e enviou e-mail de definição de senha`,
       },
     });
 
@@ -678,7 +683,7 @@ export async function createPanelUser(params: {
       uid,
       nome: cleanNome,
       email: cleanEmail,
-      perfil: params.perfil,
+      role: params.role,
       ativo: true,
       criadoEm: nowIso,
       atualizadoEm: nowIso,
@@ -688,11 +693,15 @@ export async function createPanelUser(params: {
   }
 }
 
+export async function resendUserPasswordSetupEmail(email: string): Promise<void> {
+  await sendPasswordResetEmail(auth, email.trim().toLowerCase());
+}
+
 export async function updatePanelUser(params: {
   targetUid: string;
   nome: string;
   email: string;
-  perfil: PanelUserRole;
+  role: PanelUserRole;
   ativo: boolean;
   actor: PanelUserProfile;
 }): Promise<void> {
@@ -701,7 +710,7 @@ export async function updatePanelUser(params: {
     await updateDoc(doc(db, 'usuarios', params.targetUid), {
       nome: params.nome.trim(),
       email: params.email.trim().toLowerCase(),
-      perfil: params.perfil,
+      role: params.role,
       ativo: params.ativo,
       atualizadoEm: serverTimestamp(),
     });
@@ -712,7 +721,7 @@ export async function updatePanelUser(params: {
       entidadeId: params.targetUid,
       actor: params.actor,
       detalhes: {
-        resumo: `Atualizou acesso de ${params.nome.trim()} (${params.perfil}, ${params.ativo ? 'ativo' : 'inativo'})`,
+        resumo: `Atualizou acesso de ${params.nome.trim()} (${params.role}, ${params.ativo ? 'ativo' : 'inativo'})`,
       },
     });
   } catch (error) {

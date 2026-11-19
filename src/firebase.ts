@@ -1,8 +1,11 @@
 import { deleteApp, getApps, initializeApp, type FirebaseOptions } from 'firebase/app';
 import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 import {
+  browserSessionPersistence,
   createUserWithEmailAndPassword,
   getAuth,
+  sendPasswordResetEmail,
+  setPersistence,
   signOut,
   type Auth,
 } from 'firebase/auth';
@@ -36,6 +39,16 @@ export const db: Firestore =
   databaseId && databaseId !== '(default)' ? getFirestore(app, databaseId) : getFirestore(app);
 
 export const auth: Auth = getAuth(app);
+
+/**
+ * Persistência restrita à aba/sessão do navegador (encerra ao fechar a aba).
+ */
+export const authPersistenceReady: Promise<void> =
+  typeof window !== 'undefined'
+    ? setPersistence(auth, browserSessionPersistence).catch((err) => {
+        console.warn('Não foi possível configurar browserSessionPersistence:', err);
+      })
+    : Promise.resolve();
 
 if (typeof window !== 'undefined' && recaptchaSiteKey.trim()) {
   try {
@@ -115,22 +128,38 @@ async function testConnection(): Promise<void> {
 
 void testConnection();
 
+function generateRandomTempPassword(length = 28): string {
+  const charset =
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%&*-_=+';
+  const bytes = new Uint8Array(length);
+  window.crypto.getRandomValues(bytes);
+  let result = 'A1a!';
+  for (let i = 0; i < bytes.length; i++) {
+    result += charset[bytes[i] % charset.length];
+  }
+  return result;
+}
+
 /**
- * Cria um novo usuário no Firebase Authentication usando um app secundário temporário,
- * evitando desconectar o administrador logado na sessão principal.
+ * Cria um novo usuário no Firebase Authentication usando uma segunda instância do Firebase App,
+ * evitando desconectar o administrador logado na sessão principal, e envia automaticamente o e-mail
+ * para que o novo usuário defina sua própria senha.
  */
-export async function createSecondaryAuthUser(
-  email: string,
-  password: string
+export async function createSecondaryAuthUserAndSendPasswordSetup(
+  email: string
 ): Promise<{ uid: string; email: string }> {
   const secondaryAppName = `ameta-user-provisioner-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const secondaryApp = initializeApp(envConfig, secondaryAppName);
   const secondaryAuth = getAuth(secondaryApp);
 
   try {
-    const credential = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+    await setPersistence(secondaryAuth, browserSessionPersistence).catch(() => {});
+    const tempPassword = generateRandomTempPassword();
+    const credential = await createUserWithEmailAndPassword(secondaryAuth, email, tempPassword);
     const uid = credential.user.uid;
     const createdEmail = credential.user.email || email;
+
+    await sendPasswordResetEmail(secondaryAuth, createdEmail);
     await signOut(secondaryAuth);
     return { uid, email: createdEmail };
   } finally {

@@ -170,23 +170,22 @@ export const registrationAdminMetaSchema = z.object({
   viewed: z.boolean().optional(),
 });
 
-export type PanelUserRole = 'administrador' | 'operador';
+export type PanelUserRole = 'admin' | 'operador';
 
 export interface PanelUserProfile {
   uid: string;
   nome: string;
   email: string;
-  perfil: PanelUserRole;
+  role: PanelUserRole;
   ativo: boolean;
   criadoEm: string;
   atualizadoEm: string;
 }
 
 export const panelUserCreateSchema = z.object({
-  nome: z.string().trim().min(2, 'Informe o nome do usuário.').max(150),
+  nome: z.string().trim().min(2, 'Informe o nome completo do usuário.').max(150),
   email: z.string().trim().toLowerCase().email('Informe um e-mail válido.').max(160),
-  password: z.string().min(6, 'A senha deve ter pelo menos 6 caracteres.').max(100),
-  perfil: z.enum(['administrador', 'operador']),
+  role: z.enum(['admin', 'operador']),
 });
 
 export interface DiscountTermTemplateFields {
@@ -254,6 +253,9 @@ export interface DiscountTermHistoryItem {
 }
 
 export type AuditAction =
+  | 'LOGIN'
+  | 'LOGOUT'
+  | 'LOGOUT_INATIVIDADE'
   | 'ABRIU_CADASTRO'
   | 'EDITOU_CADASTRO'
   | 'ALTEROU_STATUS'
@@ -270,12 +272,12 @@ export type AuditAction =
 export interface AuditLogItem {
   id: string;
   acao: AuditAction;
-  entidade: 'cadastros' | 'termos' | 'usuarios';
+  entidade: 'sessao' | 'cadastros' | 'termos' | 'usuarios';
   entidadeId: string;
   cadastroId: string;
-  atorUid: string;
-  atorNome: string;
-  atorEmail: string;
+  uid: string;
+  nome: string;
+  email: string;
   detalhes: Record<string, string>;
   criadoEm: string;
 }

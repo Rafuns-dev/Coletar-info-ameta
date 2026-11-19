@@ -160,7 +160,7 @@
     },
     "TermoDesconto": {
       "title": "Termo de Autorização de Desconto",
-      "description": "Histórico dos termos de autorização de desconto gerados pela equipe para um cadastro.",
+      "description": "Histórico imutável dos termos de autorização de desconto gerados pela equipe para um cadastro.",
       "type": "object",
       "properties": {
         "cadastroId": {
@@ -262,9 +262,9 @@
           "minLength": 5,
           "maxLength": 160
         },
-        "perfil": {
+        "role": {
           "type": "string",
-          "enum": ["administrador", "operador"]
+          "enum": ["admin", "operador"]
         },
         "ativo": {
           "type": "boolean"
@@ -281,20 +281,22 @@
       "required": [
         "nome",
         "email",
-        "perfil",
+        "role",
         "ativo",
-        "criadoEm",
-        "atualizadoEm"
+        "criadoEm"
       ]
     },
     "AuditoriaEvento": {
       "title": "Registro de Auditoria",
-      "description": "Trilha imutável de ações realizadas pela equipe no painel.",
+      "description": "Trilha imutável de acessos (login/logout) e ações realizadas pela equipe no painel.",
       "type": "object",
       "properties": {
         "acao": {
           "type": "string",
           "enum": [
+            "LOGIN",
+            "LOGOUT",
+            "LOGOUT_INATIVIDADE",
             "ABRIU_CADASTRO",
             "EDITOU_CADASTRO",
             "ALTEROU_STATUS",
@@ -311,7 +313,7 @@
         },
         "entidade": {
           "type": "string",
-          "enum": ["cadastros", "termos", "usuarios"]
+          "enum": ["sessao", "cadastros", "termos", "usuarios"]
         },
         "entidadeId": {
           "type": "string",
@@ -323,17 +325,17 @@
           "type": "string",
           "maxLength": 128
         },
-        "atorUid": {
+        "uid": {
           "type": "string",
           "minLength": 1,
           "maxLength": 128
         },
-        "atorNome": {
+        "nome": {
           "type": "string",
           "minLength": 1,
           "maxLength": 150
         },
-        "atorEmail": {
+        "email": {
           "type": "string",
           "minLength": 3,
           "maxLength": 160
@@ -351,9 +353,9 @@
         "entidade",
         "entidadeId",
         "cadastroId",
-        "atorUid",
-        "atorNome",
-        "atorEmail",
+        "uid",
+        "nome",
+        "email",
         "detalhes",
         "criadoEm"
       ]
@@ -370,13 +372,13 @@
       "schema": {
         "$ref": "#/entities/TermoDesconto"
       },
-      "description": "Histórico de Termos de Autorização de Desconto gerados."
+      "description": "Histórico imutável de Termos de Autorização de Desconto gerados."
     },
-    "/usuarios/{usuarioId}": {
+    "/usuarios/{uid}": {
       "schema": {
         "$ref": "#/entities/UsuarioPainel"
       },
-      "description": "Perfis autorizados do painel (administrador e operador)."
+      "description": "Perfis autorizados do painel (admin e operador)."
     },
     "/auditoria/{auditoriaId}": {
       "schema": {

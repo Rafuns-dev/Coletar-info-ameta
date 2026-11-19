@@ -1,9 +1,10 @@
-import { Loader2, Shield, Trash2, UserPlus, Users, X } from 'lucide-react';
+import { Loader2, Mail, Shield, Trash2, UserPlus, Users, X } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import {
   createPanelUser,
   extractFriendlyFirestoreMessage,
   removePanelUser,
+  resendUserPasswordSetupEmail,
   subscribeToPanelUsers,
   updatePanelUser,
 } from '../services/firestoreService.ts';
@@ -27,8 +28,7 @@ export function TeamManagementModal({ currentUser, onClose }: TeamManagementModa
 
   const [nome, setNome] = useState('');
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [perfil, setPerfil] = useState<PanelUserRole>('operador');
+  const [role, setRole] = useState<PanelUserRole>('operador');
   const [creating, setCreating] = useState(false);
   const [busyUid, setBusyUid] = useState<string | null>(null);
 
@@ -59,7 +59,7 @@ export function TeamManagementModal({ currentUser, onClose }: TeamManagementModa
     setError(null);
     setSuccessMsg(null);
 
-    const parsed = panelUserCreateSchema.safeParse({ nome, email, password, perfil });
+    const parsed = panelUserCreateSchema.safeParse({ nome, email, role });
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message || 'Verifique os dados informados.');
       return;
@@ -70,21 +70,19 @@ export function TeamManagementModal({ currentUser, onClose }: TeamManagementModa
       await createPanelUser({
         nome: parsed.data.nome,
         email: parsed.data.email,
-        password: parsed.data.password,
-        perfil: parsed.data.perfil,
+        role: parsed.data.role,
         actor: currentUser,
       });
       setNome('');
       setEmail('');
-      setPassword('');
-      setPerfil('operador');
-      setSuccessMsg('Acesso criado com sucesso. O usuário já pode entrar no painel.');
+      setRole('operador');
+      setSuccessMsg(
+        'Usuário criado com sucesso. Um e-mail automático foi enviado para ele definir a própria senha.'
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : '';
       if (msg.includes('email-already-in-use')) {
         setError('Este e-mail já está cadastrado no Firebase Authentication.');
-      } else if (msg.includes('weak-password')) {
-        setError('A senha deve ter pelo menos 6 caracteres.');
       } else {
         setError(extractFriendlyFirestoreMessage(err, 'Não foi possível criar o usuário.'));
       }
@@ -97,12 +95,13 @@ export function TeamManagementModal({ currentUser, onClose }: TeamManagementModa
     if (target.uid === currentUser.uid) return;
     setBusyUid(target.uid);
     setError(null);
+    setSuccessMsg(null);
     try {
       await updatePanelUser({
         targetUid: target.uid,
         nome: target.nome,
         email: target.email,
-        perfil: target.perfil,
+        role: target.role,
         ativo: !target.ativo,
         actor: currentUser,
       });
@@ -117,12 +116,13 @@ export function TeamManagementModal({ currentUser, onClose }: TeamManagementModa
     if (target.uid === currentUser.uid) return;
     setBusyUid(target.uid);
     setError(null);
+    setSuccessMsg(null);
     try {
       await updatePanelUser({
         targetUid: target.uid,
         nome: target.nome,
         email: target.email,
-        perfil: newRole,
+        role: newRole,
         ativo: target.ativo,
         actor: currentUser,
       });
@@ -133,10 +133,25 @@ export function TeamManagementModal({ currentUser, onClose }: TeamManagementModa
     }
   };
 
+  const handleResendPasswordEmail = async (target: PanelUserProfile) => {
+    setBusyUid(target.uid);
+    setError(null);
+    setSuccessMsg(null);
+    try {
+      await resendUserPasswordSetupEmail(target.email);
+      setSuccessMsg(`E-mail de definição de senha reenviado para ${target.email}.`);
+    } catch (err) {
+      setError(extractFriendlyFirestoreMessage(err, 'Erro ao reenviar e-mail de senha.'));
+    } finally {
+      setBusyUid(null);
+    }
+  };
+
   const handleDeleteUser = async (target: PanelUserProfile) => {
     if (target.uid === currentUser.uid) return;
     setBusyUid(target.uid);
     setError(null);
+    setSuccessMsg(null);
     try {
       await removePanelUser({
         targetUid: target.uid,
@@ -170,17 +185,17 @@ export function TeamManagementModal({ currentUser, onClose }: TeamManagementModa
                 id="team-modal-title"
                 className="font-display text-lg font-bold text-slate-900 dark:text-slate-100"
               >
-                Equipe e Acessos do Painel
+                Usuários do Painel
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Administradores criam/removem acessos e excluem cadastros; Operadores consultam, editam e geram termos.
+                Administradores gerenciam usuários e excluem registros; Operadores consultam, atualizam status/observações e geram termos.
               </p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            aria-label="Fechar janela de equipe"
+            aria-label="Fechar janela de usuários"
             className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
           >
             <X className="h-4 w-4" aria-hidden="true" />
@@ -212,10 +227,10 @@ export function TeamManagementModal({ currentUser, onClose }: TeamManagementModa
           >
             <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300 flex items-center gap-1.5">
               <UserPlus className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>Adicionar novo acesso</span>
+              <span>Criar novo usuário</span>
             </h3>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
                   Nome completo
@@ -244,47 +259,37 @@ export function TeamManagementModal({ currentUser, onClose }: TeamManagementModa
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
-                  Senha inicial (mín. 6 caracteres)
-                </label>
-                <input
-                  type="password"
-                  required
-                  minLength={6}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className={inputClass}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
                   Perfil
                 </label>
                 <select
-                  value={perfil}
-                  onChange={(e) => setPerfil(e.target.value as PanelUserRole)}
+                  value={role}
+                  onChange={(e) => setRole(e.target.value as PanelUserRole)}
                   className={inputClass}
                 >
                   <option value="operador">Operador</option>
-                  <option value="administrador">Administrador</option>
+                  <option value="admin">Administrador</option>
                 </select>
               </div>
             </div>
 
-            <div className="flex justify-end">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Ao criar o usuário, enviaremos um e-mail automático para que ele defina a própria senha sem desconectar você.
+              </p>
               <button
                 type="submit"
                 disabled={creating}
-                className="inline-flex h-10 items-center gap-2 px-4 rounded-lg bg-[#0F2942] hover:bg-[#173A5C] dark:bg-slate-100 dark:hover:bg-white text-xs font-semibold text-white dark:text-[#0F2942] disabled:opacity-60 transition-colors whitespace-nowrap"
+                className="inline-flex h-10 items-center justify-center gap-2 px-4 rounded-lg bg-[#0F2942] hover:bg-[#173A5C] dark:bg-slate-100 dark:hover:bg-white text-xs font-semibold text-white dark:text-[#0F2942] disabled:opacity-60 transition-colors whitespace-nowrap shrink-0"
               >
                 {creating ? (
                   <>
                     <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                    <span>Criando acesso...</span>
+                    <span>Criando e enviando convite...</span>
                   </>
                 ) : (
                   <>
                     <UserPlus className="h-3.5 w-3.5" aria-hidden="true" />
-                    <span>Criar acesso</span>
+                    <span>Criar usuário</span>
                   </>
                 )}
               </button>
@@ -299,7 +304,7 @@ export function TeamManagementModal({ currentUser, onClose }: TeamManagementModa
             {loading ? (
               <div className="py-6 text-xs text-slate-500 flex items-center gap-2">
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                <span>Carregando equipe...</span>
+                <span>Carregando usuários...</span>
               </div>
             ) : users.length === 0 ? (
               <p className="text-sm text-slate-500">Nenhum usuário cadastrado em /usuarios.</p>
@@ -334,27 +339,45 @@ export function TeamManagementModal({ currentUser, onClose }: TeamManagementModa
                         </p>
                       </div>
 
-                      <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex flex-wrap items-center gap-2 shrink-0">
                         <div className="inline-flex items-center gap-1.5">
                           <Shield className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
                           <select
                             aria-label={`Perfil de ${item.nome}`}
                             disabled={isSelf || isBusy}
-                            value={item.perfil}
+                            value={item.role}
                             onChange={(e) =>
                               void handleChangeRole(item, e.target.value as PanelUserRole)
                             }
                             className="h-9 px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-xs font-medium text-slate-700 dark:text-slate-200 disabled:opacity-50"
                           >
                             <option value="operador">Operador</option>
-                            <option value="administrador">Administrador</option>
+                            <option value="admin">Administrador</option>
                           </select>
                         </div>
 
                         <button
                           type="button"
+                          disabled={isBusy}
+                          onClick={() => void handleResendPasswordEmail(item)}
+                          title="Enviar e-mail para definir/redefinir senha"
+                          className="inline-flex h-9 items-center gap-1 px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap"
+                        >
+                          <Mail className="h-3.5 w-3.5" aria-hidden="true" />
+                          <span>Redefinir senha</span>
+                        </button>
+
+                        <button
+                          type="button"
                           disabled={isSelf || isBusy}
                           onClick={() => void handleToggleActive(item)}
+                          title={
+                            isSelf
+                              ? 'Você não pode desativar o próprio acesso'
+                              : item.ativo
+                                ? 'Desativar acesso'
+                                : 'Ativar acesso'
+                          }
                           className="inline-flex h-9 items-center px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50 whitespace-nowrap"
                         >
                           {item.ativo ? 'Desativar' : 'Ativar'}

@@ -4,13 +4,13 @@ import {
   signInWithEmailAndPassword,
   signOut,
 } from 'firebase/auth';
-import { ArrowLeft, Loader2, Lock } from 'lucide-react';
-import { useState, type FormEvent } from 'react';
+import { ArrowLeft, Eye, EyeOff, Loader2, Lock } from 'lucide-react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { AmetaLogo } from '../components/AmetaLogo.tsx';
 import { ThemeToggle } from '../components/ThemeToggle.tsx';
-import { auth } from '../firebase.ts';
+import { auth, authPersistenceReady } from '../firebase.ts';
 import {
-  extractFriendlyFirestoreMessage,
+  recordSessionAudit,
   resolvePanelUserProfile,
 } from '../services/firestoreService.ts';
 import type { PanelUserProfile } from '../shared/schema.ts';
@@ -20,6 +20,7 @@ interface AdminLoginPageProps {
   onToggleTheme: () => void;
   onLoginSuccess: (user: PanelUserProfile) => void;
   onNavigate: (path: string) => void;
+  externalNotice?: string | null;
 }
 
 function mapFirebaseAuthError(error: unknown): string {
@@ -28,23 +29,19 @@ function mapFirebaseAuthError(error: unknown): string {
       case 'auth/invalid-credential':
       case 'auth/wrong-password':
       case 'auth/user-not-found':
-        return 'E-mail ou senha incorretos.';
       case 'auth/invalid-email':
-        return 'Informe um e-mail válido.';
-      case 'auth/user-disabled':
-        return 'Esta conta foi desativada no Firebase Authentication.';
+        return 'E-mail ou senha incorretos.';
       case 'auth/too-many-requests':
-        return 'Muitas tentativas seguidas. Aguarde alguns minutos ou redefina sua senha.';
+        return 'Muitas tentativas seguidas. Acesso temporariamente bloqueado; aguarde alguns minutos ou utilize "Esqueci minha senha".';
+      case 'auth/user-disabled':
+        return 'Acesso não autorizado.';
       case 'auth/network-request-failed':
         return 'Falha de conexão com o Firebase. Verifique sua internet.';
       default:
-        return `Erro ao autenticar (${error.code}).`;
+        return 'Não foi possível entrar. Verifique suas credenciais e tente novamente.';
     }
   }
-  return extractFriendlyFirestoreMessage(
-    error,
-    'Não foi possível autenticar. Verifique sua conexão.'
-  );
+  return 'Não foi possível autenticar. Verifique sua conexão.';
 }
 
 export function AdminLoginPage({
@@ -52,13 +49,21 @@ export function AdminLoginPage({
   onToggleTheme,
   onLoginSuccess,
   onNavigate,
+  externalNotice = null,
 }: AdminLoginPageProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState<string | null>(externalNotice);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [resetting, setResetting] = useState(false);
+
+  useEffect(() => {
+    if (externalNotice) {
+      setError(externalNotice);
+    }
+  }, [externalNotice]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -67,15 +72,16 @@ export function AdminLoginPage({
     setIsSubmitting(true);
 
     try {
+      await authPersistenceReady;
       const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
       const profile = await resolvePanelUserProfile(credential.user);
       if (!profile) {
         await signOut(auth);
-        setError(
-          'Esta conta não possui acesso ativo cadastrado na equipe da Ameta (/usuarios).'
-        );
+        setError('Acesso não autorizado.');
         return;
       }
+
+      void recordSessionAudit(profile, 'LOGIN').catch(() => {});
       onLoginSuccess(profile);
       onNavigate('/admin');
     } catch (err) {
@@ -89,8 +95,8 @@ export function AdminLoginPage({
     setError(null);
     setInfoMessage(null);
     const trimmedEmail = email.trim();
-    if (!trimmedEmail) {
-      setError('Informe seu e-mail corporativo acima antes de solicitar a redefinição.');
+    if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      setError('Informe um e-mail corporativo válido no campo acima para redefinir a senha.');
       return;
     }
 
@@ -98,10 +104,18 @@ export function AdminLoginPage({
     try {
       await sendPasswordResetEmail(auth, trimmedEmail);
       setInfoMessage(
-        'Se o e-mail estiver cadastrado, enviamos um link de redefinição de senha.'
+        'Se o e-mail estiver cadastrado, enviamos um link para redefinição de senha.'
       );
     } catch (err) {
-      setError(mapFirebaseAuthError(err));
+      if (err instanceof FirebaseError && err.code === 'auth/too-many-requests') {
+        setError(
+          'Muitas solicitações seguidas. Aguarde alguns minutos antes de tentar novamente.'
+        );
+      } else {
+        setInfoMessage(
+          'Se o e-mail estiver cadastrado, enviamos um link para redefinição de senha.'
+        );
+      }
     } finally {
       setResetting(false);
     }
@@ -132,7 +146,7 @@ export function AdminLoginPage({
               Acesso Administrativo
             </h1>
             <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-              Área restrita à equipe interna da Ameta.
+              Área restrita à equipe autorizada da Ameta.
             </p>
           </div>
 
@@ -191,15 +205,30 @@ export function AdminLoginPage({
                   {resetting ? 'Enviando...' : 'Esqueci minha senha'}
                 </button>
               </div>
-              <input
-                id="admin-password"
-                type="password"
-                required
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full h-11 px-3.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#0F2942]/20 dark:focus:ring-slate-400/20 focus:border-[#0F2942] dark:focus:border-slate-400"
-              />
+              <div className="relative">
+                <input
+                  id="admin-password"
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full h-11 pl-3.5 pr-11 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#0F2942]/20 dark:focus:ring-slate-400/20 focus:border-[#0F2942] dark:focus:border-slate-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                  title={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
+                >
+                  {showPassword ? (
+                    <EyeOff className="h-4 w-4" aria-hidden="true" />
+                  ) : (
+                    <Eye className="h-4 w-4" aria-hidden="true" />
+                  )}
+                </button>
+              </div>
             </div>
 
             <button
@@ -215,7 +244,7 @@ export function AdminLoginPage({
               ) : (
                 <>
                   <Lock className="h-4 w-4" aria-hidden="true" />
-                  <span>Entrar no painel</span>
+                  <span>Entrar</span>
                 </>
               )}
             </button>

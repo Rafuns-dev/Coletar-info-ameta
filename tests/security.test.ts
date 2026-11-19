@@ -19,10 +19,11 @@ test('firestore.rules bloqueia leitura pública de cadastros, valida os 16 campo
 
   // Visitante não autenticado só pode criar em /cadastros; leitura/atualização exige usuário ativo do painel; exclusão só administrador
   assert.match(rulesText, /match \/cadastros\/\{cadastroId\}/);
-  assert.match(rulesText, /allow get, list:\s*if isPanelUser\(\);/);
+  assert.match(rulesText, /allow get, list:\s*if equipe\(\);/);
   assert.match(rulesText, /allow create:\s*if isValidId\(cadastroId\)\s*&& isValidCadastro\(incoming\(\)\)/);
-  assert.match(rulesText, /allow update:\s*if isPanelUser\(\)/);
-  assert.match(rulesText, /allow delete:\s*if isAdmin\(\)/);
+  assert.match(rulesText, /allow update:\s*if equipe\(\)/);
+  assert.match(rulesText, /affectedKeys\(\)\.hasOnly\(\[\s*'status',\s*'observacoes',\s*'visto',\s*'vistoEm',\s*'atualizadoEm'\s*\]\)/);
+  assert.match(rulesText, /allow delete:\s*if admin\(\)/);
 
   // Bloqueio explícito de estado inicial na criação pública
   assert.match(rulesText, /incoming\(\)\.status == 'Novo'/);
@@ -30,12 +31,13 @@ test('firestore.rules bloqueia leitura pública de cadastros, valida os 16 campo
   assert.match(rulesText, /incoming\(\)\.vistoEm == null/);
   assert.match(rulesText, /incoming\(\)\.observacoes == ''/);
 
-  // Regras de /usuarios e /auditoria
-  assert.match(rulesText, /match \/usuarios\/\{usuarioId\}/);
-  assert.match(rulesText, /allow list:\s*if isAdmin\(\);/);
+  // Regras de /termos, /usuarios e /auditoria
+  assert.match(rulesText, /match \/termos\/\{termoId\}[\s\S]*allow update:\s*if false;/);
+  assert.match(rulesText, /match \/usuarios\/\{uid\}/);
+  assert.match(rulesText, /allow list:\s*if admin\(\);/);
   assert.match(rulesText, /match \/auditoria\/\{auditoriaId\}/);
-  assert.match(rulesText, /allow get, list:\s*if isAdmin\(\);/);
-  assert.match(rulesText, /allow create:\s*if isPanelUser\(\)/);
+  assert.match(rulesText, /allow get, list:\s*if admin\(\);/);
+  assert.match(rulesText, /allow create:\s*if equipe\(\)[\s\S]*incoming\(\)\.uid == request\.auth\.uid/);
   assert.match(rulesText, /allow update, delete:\s*if false;/);
 
   // Negação padrão no fechamento

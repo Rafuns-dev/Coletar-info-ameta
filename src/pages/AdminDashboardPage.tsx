@@ -571,16 +571,16 @@ export function AdminDashboardPage({
 
           <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
             <span className="hidden md:inline text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap">
-              {user.nome} ({user.perfil === 'administrador' ? 'Admin' : 'Operador'})
+              {user.nome} · {user.role === 'admin' ? 'Administrador' : 'Operador'}
             </span>
-            {user.perfil === 'administrador' && (
+            {user.role === 'admin' && (
               <button
                 type="button"
                 onClick={() => setTeamModalOpen(true)}
                 className="inline-flex h-10 items-center gap-1.5 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors whitespace-nowrap shrink-0"
               >
                 <Users className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>Equipe</span>
+                <span>Usuários</span>
               </button>
             )}
             <a
@@ -1233,8 +1233,8 @@ export function AdminDashboardPage({
         />
       )}
 
-      {/* Gerenciamento de equipe (somente administrador) */}
-      {teamModalOpen && user.perfil === 'administrador' && (
+      {/* Gerenciamento de usuários (somente administrador) */}
+      {teamModalOpen && user.role === 'admin' && (
         <TeamManagementModal
           currentUser={user}
           onClose={() => setTeamModalOpen(false)}

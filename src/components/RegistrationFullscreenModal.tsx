@@ -241,7 +241,7 @@ export function RegistrationFullscreenModal({
     );
 
     let unsubAuditoria = () => {};
-    if (currentUser.perfil === 'administrador') {
+    if (currentUser.role === 'admin') {
       unsubAuditoria = subscribeToAuditoriaByCadastro(
         registrationId,
         (logs) => {
@@ -257,7 +257,7 @@ export function RegistrationFullscreenModal({
       unsubTermos();
       unsubAuditoria();
     };
-  }, [registrationId, currentUser.perfil]);
+  }, [registrationId, currentUser.role]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -399,7 +399,7 @@ export function RegistrationFullscreenModal({
   };
 
   const handleDelete = async () => {
-    if (!record || currentUser.perfil !== 'administrador') return;
+    if (!record || currentUser.role !== 'admin') return;
     setIsDeleting(true);
     try {
       await deleteCadastroWithCascade(record.id, record.fullName, currentUser);
@@ -421,7 +421,7 @@ export function RegistrationFullscreenModal({
   const editInputClass =
     'w-full h-10 px-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#0F2942]/20';
 
-  const isAdmin = currentUser.perfil === 'administrador';
+  const isAdmin = currentUser.role === 'admin';
 
   return (
     <div
@@ -512,14 +512,16 @@ export function RegistrationFullscreenModal({
                 <span className="hidden sm:inline">Exportar PDF</span>
               </button>
 
-              <button
-                type="button"
-                onClick={() => setIsEditing(true)}
-                className="inline-flex h-10 items-center gap-1.5 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors whitespace-nowrap"
-              >
-                <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-                <span className="hidden md:inline">Editar</span>
-              </button>
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setIsEditing(true)}
+                  className="inline-flex h-10 items-center gap-1.5 px-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors whitespace-nowrap"
+                >
+                  <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span className="hidden md:inline">Editar</span>
+                </button>
+              )}
 
               {isAdmin && (
                 <button
@@ -1122,9 +1124,9 @@ export function RegistrationFullscreenModal({
                         >
                           <span>
                             <strong className="font-medium text-slate-700 dark:text-slate-300">
-                              {log.atorNome}
+                              {log.nome}
                             </strong>{' '}
-                            ({log.atorEmail}) — {actionLabel}
+                            ({log.email}) — {actionLabel}
                             {log.detalhes?.valorTotal ? ` · R$ ${log.detalhes.valorTotal}` : ''}
                           </span>
                           <span className="tabular-nums">{formatDateTimeBR(log.criadoEm)}</span>
