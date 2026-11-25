@@ -319,7 +319,9 @@
             "REBAIXOU_TERMO_PDF",
             "CRIOU_USUARIO",
             "ATUALIZOU_USUARIO",
-            "REMOVEU_USUARIO"
+            "REMOVEU_USUARIO",
+            "ANEXOU_DOCUMENTO",
+            "EXCLUIU_DOCUMENTO"
           ]
         },
         "entidade": {
@@ -370,6 +372,51 @@
         "detalhes",
         "criadoEm"
       ]
+    },
+    "DocumentoAnexo": {
+      "title": "Documento Anexado do Prestador",
+      "description": "Anexo opcional de documento (RG, CNH ou Certificado MEI) vinculado a um cadastro.",
+      "type": "object",
+      "properties": {
+        "tipo": {
+          "type": "string",
+          "enum": ["rg", "cnh", "certificado_mei"]
+        },
+        "nomeArquivo": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "mimeType": {
+          "type": "string",
+          "enum": ["application/pdf", "image/jpeg", "image/png", "image/webp"]
+        },
+        "tamanhoBytes": {
+          "type": "integer"
+        },
+        "conteudoBase64": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 950000
+        },
+        "criadoEm": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "atualizadoEm": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "tipo",
+        "nomeArquivo",
+        "mimeType",
+        "tamanhoBytes",
+        "conteudoBase64",
+        "criadoEm",
+        "atualizadoEm"
+      ]
     }
   },
   "firestore": {
@@ -378,6 +425,12 @@
         "$ref": "#/entities/Cadastro"
       },
       "description": "Coleção principal com os 16 campos do prestador e metadados operacionais."
+    },
+    "/cadastros/{cadastroId}/documentos/{docTipo}": {
+      "schema": {
+        "$ref": "#/entities/DocumentoAnexo"
+      },
+      "description": "Subcoleção de anexos opcionais (rg, cnh, certificado_mei) vinculados ao cadastro."
     },
     "/termos/{termoId}": {
       "schema": {

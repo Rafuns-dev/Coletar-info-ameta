@@ -31,6 +31,12 @@ test('firestore.rules bloqueia leitura pública de cadastros, valida os 16 campo
   assert.match(rulesText, /incoming\(\)\.vistoEm == null/);
   assert.match(rulesText, /incoming\(\)\.observacoes == ''/);
 
+  // Regras de documentos opcionais (RG, CNH, Certificado MEI)
+  assert.match(rulesText, /match \/documentos\/\{docTipo\}/);
+  assert.match(rulesText, /docTipo in \['rg', 'cnh', 'certificado_mei'\]/);
+  assert.match(rulesText, /isValidDocumentoAnexo\(incoming\(\), docTipo\)/);
+  assert.match(rulesText, /getAfter\(\/databases\/\$\(database\)\/documents\/cadastros\/\$\(cadastroId\)\)\.data\.criadoEm == request\.time/);
+
   // Regras de /termos, /usuarios e /auditoria
   assert.match(rulesText, /match \/termos\/\{termoId\}[\s\S]*allow update:\s*if false;/);
   assert.match(rulesText, /data\.documentosSelecionados is list/);

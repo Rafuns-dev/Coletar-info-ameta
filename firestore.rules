@@ -162,6 +162,39 @@ service cloud.firestore {
       && data.atualizadoEm is timestamp;
     }
 
+    function isValidDocumentoAnexo(data, docTipo) {
+      return data.keys().hasAll([
+        'tipo',
+        'nomeArquivo',
+        'mimeType',
+        'tamanhoBytes',
+        'conteudoBase64',
+        'criadoEm',
+        'atualizadoEm'
+      ])
+      && data.keys().hasOnly([
+        'tipo',
+        'nomeArquivo',
+        'mimeType',
+        'tamanhoBytes',
+        'conteudoBase64',
+        'criadoEm',
+        'atualizadoEm'
+      ])
+      && data.tipo is string
+      && data.tipo == docTipo
+      && data.tipo in ['rg', 'cnh', 'certificado_mei']
+      && txt(data.nomeArquivo, 1, 200)
+      && data.mimeType is string
+      && data.mimeType in ['application/pdf', 'image/jpeg', 'image/png', 'image/webp']
+      && data.tamanhoBytes is int
+      && data.tamanhoBytes >= 1
+      && data.tamanhoBytes <= 700000
+      && txt(data.conteudoBase64, 4, 950000)
+      && data.criadoEm is timestamp
+      && data.atualizadoEm is timestamp;
+    }
+
     function isValidCamposTemplate(campos) {
       return campos is map
         && campos.keys().hasAll([
@@ -352,7 +385,9 @@ service cloud.firestore {
         'REBAIXOU_TERMO_PDF',
         'CRIOU_USUARIO',
         'ATUALIZOU_USUARIO',
-        'REMOVEU_USUARIO'
+        'REMOVEU_USUARIO',
+        'ANEXOU_DOCUMENTO',
+        'EXCLUIU_DOCUMENTO'
       ]
       && data.entidade is string
       && data.entidade in ['sessao', 'cadastros', 'termos', 'usuarios']
@@ -401,6 +436,49 @@ service cloud.firestore {
 
       // Só administrador exclui
       allow delete: if admin() && isValidId(cadastroId);
+
+      // DOCUMENTOS OPCIONAIS ANEXADOS (RG, CNH, Certificado MEI)
+      match /documentos/{docTipo} {
+        allow get: if equipe()
+          && isValidId(cadastroId)
+          && docTipo in ['rg', 'cnh', 'certificado_mei'];
+
+        allow list: if equipe();
+
+        // Visitante sem login: apenas na criação atômica do cadastro correspondente
+        // Equipe autenticada: pode anexar em cadastro existente
+        allow create: if isValidId(cadastroId)
+          && docTipo in ['rg', 'cnh', 'certificado_mei']
+          && isValidDocumentoAnexo(incoming(), docTipo)
+          && incoming().criadoEm == request.time
+          && incoming().atualizadoEm == request.time
+          && (
+            (equipe() && exists(/databases/$(database)/documents/cadastros/$(cadastroId)))
+            || (
+              existsAfter(/databases/$(database)/documents/cadastros/$(cadastroId))
+              && getAfter(/databases/$(database)/documents/cadastros/$(cadastroId)).data.criadoEm == request.time
+            )
+          );
+
+        allow update: if equipe()
+          && isValidId(cadastroId)
+          && docTipo in ['rg', 'cnh', 'certificado_mei']
+          && isValidDocumentoAnexo(incoming(), docTipo)
+          && exists(/databases/$(database)/documents/cadastros/$(cadastroId))
+          && incoming().criadoEm == existing().criadoEm
+          && incoming().atualizadoEm == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'nomeArquivo',
+            'mimeType',
+            'tamanhoBytes',
+            'conteudoBase64',
+            'atualizadoEm'
+          ]);
+
+        allow delete: if admin()
+          && isValidId(cadastroId)
+          && docTipo in ['rg', 'cnh', 'certificado_mei'];
+      }
     }
 
     // TERMOS DE DESCONTO GERADOS

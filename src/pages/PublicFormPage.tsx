@@ -4,9 +4,13 @@ import {
   Briefcase,
   Building2,
   CheckCircle2,
+  FileText,
+  FileUp,
   Loader2,
+  Paperclip,
   Phone,
   ShieldCheck,
+  Trash2,
   User,
   Users,
 } from 'lucide-react';
@@ -21,6 +25,8 @@ import { MARITAL_STATUS_OPTIONS, ROLE_OPTIONS } from '../shared/formConfig.ts';
 import {
   contractorRegistrationSchema,
   type ContractorRegistrationInput,
+  type RegistrationDocumentAttachmentInput,
+  type RegistrationDocumentType,
 } from '../shared/schema.ts';
 import {
   formatCEP,
@@ -29,6 +35,12 @@ import {
   formatPhone,
   getTodayISODate,
 } from '../shared/validators.ts';
+import {
+  buildAttachmentDataUrl,
+  formatBytesLabel,
+  prepareAttachmentFile,
+  REGISTRATION_DOCUMENT_SLOTS,
+} from '../utils/documentUpload.ts';
 
 interface PublicFormPageProps {
   onNavigate: (path: string) => void;
@@ -74,6 +86,13 @@ export function PublicFormPage({ onNavigate }: PublicFormPageProps) {
   const [submitted, setSubmitted] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const [honeypot, setHoneypot] = useState('');
+  const [attachments, setAttachments] = useState<
+    Partial<Record<RegistrationDocumentType, RegistrationDocumentAttachmentInput>>
+  >({});
+  const [attachmentErrors, setAttachmentErrors] = useState<
+    Partial<Record<RegistrationDocumentType, string>>
+  >({});
+  const [processingDocType, setProcessingDocType] = useState<RegistrationDocumentType | null>(null);
 
   const {
     register,
@@ -133,6 +152,36 @@ export function PublicFormPage({ onNavigate }: PublicFormPageProps) {
     return null;
   };
 
+  const handleAttachmentChange = async (
+    tipo: RegistrationDocumentType,
+    file: File | null
+  ) => {
+    if (!file) return;
+    setAttachmentErrors((prev) => ({ ...prev, [tipo]: undefined }));
+    setProcessingDocType(tipo);
+    try {
+      const prepared = await prepareAttachmentFile(file, tipo);
+      setAttachments((prev) => ({ ...prev, [tipo]: prepared }));
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Não foi possível preparar este arquivo. Tente outro formato.';
+      setAttachmentErrors((prev) => ({ ...prev, [tipo]: message }));
+    } finally {
+      setProcessingDocType((curr) => (curr === tipo ? null : curr));
+    }
+  };
+
+  const handleRemoveAttachment = (tipo: RegistrationDocumentType) => {
+    setAttachments((prev) => {
+      const next = { ...prev };
+      delete next[tipo];
+      return next;
+    });
+    setAttachmentErrors((prev) => ({ ...prev, [tipo]: undefined }));
+  };
+
   const onSubmit = async (data: ContractorRegistrationInput) => {
     setServerError(null);
 
@@ -150,7 +199,10 @@ export function PublicFormPage({ onNavigate }: PublicFormPageProps) {
     }
 
     try {
-      await submitPublicRegistration(data);
+      const attachmentList = Object.values(attachments).filter(
+        (item): item is RegistrationDocumentAttachmentInput => Boolean(item)
+      );
+      await submitPublicRegistration(data, attachmentList);
       setSubmitted(true);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (error) {
@@ -810,16 +862,173 @@ export function PublicFormPage({ onNavigate }: PublicFormPageProps) {
                 </div>
               </div>
 
+              {/* Anexos opcionais de documentos (RG, CNH, Certificado MEI) */}
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-[#E3E7EF]">
+                  <div className="flex items-center gap-2.5">
+                    <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-[#EEF1FC] text-[#1F2E85]">
+                      <Paperclip className="h-4 w-4" aria-hidden="true" />
+                    </span>
+                    <div>
+                      <h2 className="font-display text-sm font-bold tracking-tight text-[#1F2E85]">
+                        Documentos (Opcional)
+                      </h2>
+                    </div>
+                  </div>
+                  <span className="text-[11px] font-medium text-[#7F7F7F]">
+                    Envio não obrigatório · PDF, JPG, PNG ou WEBP
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {REGISTRATION_DOCUMENT_SLOTS.map((slot) => {
+                    const attached = attachments[slot.type];
+                    const docError = attachmentErrors[slot.type];
+                    const isProcessing = processingDocType === slot.type;
+                    const inputId = `doc-upload-${slot.type}`;
+                    const isImage = attached?.mimeType.startsWith('image/');
+
+                    return (
+                      <div
+                        key={slot.type}
+                        className={`rounded-[12px] border p-4 transition-colors flex flex-col justify-between gap-3 ${
+                          docError
+                            ? 'border-[#D64545] bg-[#FDF1F1]/40'
+                            : attached
+                              ? 'border-[#1E9E6A]/55 bg-[#EBF9F3]/40'
+                              : 'border-[#E3E7EF] bg-[#F8FAFD] hover:border-[#CDD4E3]'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[13px] font-semibold text-[#1B2340]">
+                              {slot.title}
+                            </span>
+                            <span className="text-[10.5px] font-medium text-[#7F7F7F]">
+                              Opcional
+                            </span>
+                          </div>
+                          <p className="mt-1 text-[11.5px] text-[#7F7F7F] leading-snug">
+                            {slot.description}
+                          </p>
+                        </div>
+
+                        {attached ? (
+                          <div className="space-y-2.5">
+                            <div className="flex items-center gap-2.5 rounded-[10px] border border-[#E3E7EF] bg-white p-2.5">
+                              {isImage ? (
+                                <img
+                                  src={buildAttachmentDataUrl(attached)}
+                                  alt={slot.title}
+                                  className="h-10 w-10 rounded-[6px] object-cover border border-[#E3E7EF] shrink-0"
+                                />
+                              ) : (
+                                <span className="inline-flex h-10 w-10 items-center justify-center rounded-[6px] bg-[#EEF1FC] text-[#1F2E85] shrink-0">
+                                  <FileText className="h-5 w-5" aria-hidden="true" />
+                                </span>
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <p
+                                  className="text-xs font-semibold text-[#1B2340] truncate"
+                                  title={attached.nomeArquivo}
+                                >
+                                  {attached.nomeArquivo}
+                                </p>
+                                <p className="text-[11px] text-[#1E9E6A] font-medium tabular-nums">
+                                  Anexado · {formatBytesLabel(attached.tamanhoBytes)}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                              <label
+                                htmlFor={inputId}
+                                className="flex-1 inline-flex h-8 items-center justify-center gap-1.5 px-2.5 rounded-[8px] border border-[#E3E7EF] bg-white hover:bg-[#F5F7FB] text-[11.5px] font-semibold text-[#1F2E85] cursor-pointer transition-colors"
+                              >
+                                <FileUp className="h-3.5 w-3.5" aria-hidden="true" />
+                                <span>Trocar</span>
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveAttachment(slot.type)}
+                                aria-label={`Remover ${slot.title}`}
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-[8px] border border-[#F5C6C6] bg-white hover:bg-[#FDF1F1] text-[#D64545] transition-colors shrink-0"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <label
+                            htmlFor={inputId}
+                            className="group flex flex-col items-center justify-center gap-1.5 rounded-[10px] border border-dashed border-[#CDD4E3] bg-white hover:border-[#2536A8] hover:bg-[#F5F7FB] px-3 py-4 text-center cursor-pointer transition-colors"
+                          >
+                            {isProcessing ? (
+                              <>
+                                <Loader2
+                                  className="h-5 w-5 animate-spin text-[#2536A8]"
+                                  aria-hidden="true"
+                                />
+                                <span className="text-xs font-medium text-[#2536A8]">
+                                  Preparando arquivo...
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                <FileUp
+                                  className="h-5 w-5 text-[#229A9A] group-hover:text-[#2536A8] transition-colors"
+                                  aria-hidden="true"
+                                />
+                                <span className="text-xs font-semibold text-[#1F2E85]">
+                                  Selecionar arquivo
+                                </span>
+                                <span className="text-[10.5px] text-[#7F7F7F]">
+                                  PDF até 650 KB ou foto
+                                </span>
+                              </>
+                            )}
+                          </label>
+                        )}
+
+                        <input
+                          id={inputId}
+                          type="file"
+                          accept={slot.accept}
+                          disabled={isProcessing || isSubmitting}
+                          className="sr-only"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0] ?? null;
+                            e.target.value = '';
+                            void handleAttachmentChange(slot.type, file);
+                          }}
+                        />
+
+                        {docError && (
+                          <p role="alert" className="text-[11.5px] font-medium text-[#D64545] leading-snug">
+                            {docError}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div className="pt-2 space-y-3">
                 <button
                   type="submit"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || processingDocType !== null}
                   className="ameta-btn-interactive w-full min-h-[52px] rounded-[10px] bg-[#1F2E85] hover:bg-[#2536A8] active:bg-[#172368] disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold text-[15px] shadow-[0_6px_18px_-6px_rgba(31,46,133,0.45)] inline-flex items-center justify-center gap-2.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2536A8]"
                 >
                   {isSubmitting ? (
                     <>
                       <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
                       <span>Enviando cadastro...</span>
+                    </>
+                  ) : processingDocType !== null ? (
+                    <>
+                      <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
+                      <span>Processando documento...</span>
                     </>
                   ) : (
                     <span>Enviar</span>

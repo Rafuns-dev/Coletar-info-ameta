@@ -170,6 +170,38 @@ export const registrationAdminMetaSchema = z.object({
   viewed: z.boolean().optional(),
 });
 
+export const REGISTRATION_DOCUMENT_TYPES = ['rg', 'cnh', 'certificado_mei'] as const;
+export type RegistrationDocumentType = (typeof REGISTRATION_DOCUMENT_TYPES)[number];
+
+export const DOCUMENT_MIME_TYPES = [
+  'application/pdf',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+] as const;
+export type RegistrationDocumentMimeType = (typeof DOCUMENT_MIME_TYPES)[number];
+
+export const MAX_REGISTRATION_DOCUMENT_BYTES = 700_000;
+export const MAX_REGISTRATION_DOCUMENT_BASE64_LENGTH = 950_000;
+
+export const registrationDocumentAttachmentSchema = z.object({
+  tipo: z.enum(REGISTRATION_DOCUMENT_TYPES),
+  nomeArquivo: z.string().trim().min(1).max(200),
+  mimeType: z.enum(DOCUMENT_MIME_TYPES),
+  tamanhoBytes: z.number().int().min(1).max(MAX_REGISTRATION_DOCUMENT_BYTES),
+  conteudoBase64: z.string().min(4).max(MAX_REGISTRATION_DOCUMENT_BASE64_LENGTH),
+});
+
+export type RegistrationDocumentAttachmentInput = z.infer<
+  typeof registrationDocumentAttachmentSchema
+>;
+
+export interface RegistrationDocumentAttachment extends RegistrationDocumentAttachmentInput {
+  id: RegistrationDocumentType;
+  criadoEm: string;
+  atualizadoEm: string;
+}
+
 export type PanelUserRole = 'admin' | 'operador';
 
 export interface PanelUserProfile {
@@ -299,7 +331,9 @@ export type AuditAction =
   | 'REBAIXOU_TERMO_PDF'
   | 'CRIOU_USUARIO'
   | 'ATUALIZOU_USUARIO'
-  | 'REMOVEU_USUARIO';
+  | 'REMOVEU_USUARIO'
+  | 'ANEXOU_DOCUMENTO'
+  | 'EXCLUIU_DOCUMENTO';
 
 export interface AuditLogItem {
   id: string;

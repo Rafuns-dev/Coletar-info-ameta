@@ -28,6 +28,7 @@ import {
 import type { RegistrationStatus } from '../shared/formConfig.ts';
 import {
   contractorRegistrationSchema,
+  registrationDocumentAttachmentSchema,
   type AuditAction,
   type AuditLogItem,
   type ContractorRegistrationDetail,
@@ -37,6 +38,10 @@ import {
   type DiscountTermTemplateFields,
   type PanelUserProfile,
   type PanelUserRole,
+  type RegistrationDocumentAttachment,
+  type RegistrationDocumentAttachmentInput,
+  type RegistrationDocumentMimeType,
+  type RegistrationDocumentType,
 } from '../shared/schema.ts';
 import {
   formatCEP,
@@ -114,6 +119,22 @@ function mapCadastroDoc(
     viewedAt: data.vistoEm ? toIsoString(data.vistoEm) : null,
     createdAt: toIsoString(data.criadoEm),
     updatedAt: toIsoString(data.atualizadoEm),
+  };
+}
+
+function mapDocumentoDoc(
+  id: string,
+  data: Record<string, unknown>
+): RegistrationDocumentAttachment {
+  return {
+    id: id as RegistrationDocumentType,
+    tipo: (data.tipo as RegistrationDocumentType) || (id as RegistrationDocumentType),
+    nomeArquivo: String(data.nomeArquivo || ''),
+    mimeType: String(data.mimeType || 'application/pdf') as RegistrationDocumentMimeType,
+    tamanhoBytes: Number(data.tamanhoBytes || 0),
+    conteudoBase64: String(data.conteudoBase64 || ''),
+    criadoEm: toIsoString(data.criadoEm),
+    atualizadoEm: toIsoString(data.atualizadoEm ?? data.criadoEm),
   };
 }
 
@@ -248,13 +269,20 @@ export async function recordSessionAudit(
 // ==================== FORMULÁRIO PÚBLICO ====================
 
 export async function submitPublicRegistration(
-  rawInput: ContractorRegistrationInput
+  rawInput: ContractorRegistrationInput,
+  attachments: RegistrationDocumentAttachmentInput[] = []
 ): Promise<string> {
   const normalized = normalizeCadastroPayload(rawInput);
+  const parsedAttachments = attachments.map((item) =>
+    registrationDocumentAttachmentSchema.parse(item)
+  );
   const path = 'cadastros';
 
   try {
-    const ref = await addDoc(collection(db, path), {
+    const cadastroRef = doc(collection(db, path));
+    const batch = writeBatch(db);
+
+    batch.set(cadastroRef, {
       ...normalized,
       status: 'Novo',
       observacoes: '',
@@ -263,7 +291,22 @@ export async function submitPublicRegistration(
       criadoEm: serverTimestamp(),
       atualizadoEm: serverTimestamp(),
     });
-    return ref.id;
+
+    for (const attachment of parsedAttachments) {
+      const docRef = doc(db, path, cadastroRef.id, 'documentos', attachment.tipo);
+      batch.set(docRef, {
+        tipo: attachment.tipo,
+        nomeArquivo: attachment.nomeArquivo,
+        mimeType: attachment.mimeType,
+        tamanhoBytes: attachment.tamanhoBytes,
+        conteudoBase64: attachment.conteudoBase64,
+        criadoEm: serverTimestamp(),
+        atualizadoEm: serverTimestamp(),
+      });
+    }
+
+    await batch.commit();
+    return cadastroRef.id;
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, path);
   }
@@ -465,10 +508,14 @@ export async function deleteCadastroWithCascade(
     const termosSnap = await getDocs(
       query(collection(db, 'termos'), where('cadastroId', '==', cadastroId))
     );
+    const docsSnap = await getDocs(collection(db, 'cadastros', cadastroId, 'documentos'));
 
     const batch = writeBatch(db);
     for (const termoDoc of termosSnap.docs) {
       batch.delete(termoDoc.ref);
+    }
+    for (const anexoDoc of docsSnap.docs) {
+      batch.delete(anexoDoc.ref);
     }
     batch.delete(doc(db, 'cadastros', cadastroId));
     await batch.commit();
@@ -480,6 +527,105 @@ export async function deleteCadastroWithCascade(
       cadastroId,
       actor,
       detalhes: { resumo: `Excluiu cadastro de ${fullName}` },
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+// ==================== DOCUMENTOS OPCIONAIS ANEXADOS (RG, CNH, MEI) ====================
+
+export function subscribeToDocumentosByCadastro(
+  cadastroId: string,
+  onData: (items: RegistrationDocumentAttachment[]) => void,
+  onError: (error: Error) => void
+): Unsubscribe {
+  const path = `cadastros/${cadastroId}/documentos`;
+  const q = collection(db, 'cadastros', cadastroId, 'documentos');
+
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      onData(snapshot.docs.map((d) => mapDocumentoDoc(d.id, d.data())));
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.LIST, path);
+      } catch (wrapped) {
+        onError(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+      }
+    }
+  );
+}
+
+export async function upsertCadastroDocumento(params: {
+  cadastroId: string;
+  attachment: RegistrationDocumentAttachmentInput;
+  alreadyExists: boolean;
+  actor: PanelUserProfile;
+}): Promise<void> {
+  const parsed = registrationDocumentAttachmentSchema.parse(params.attachment);
+  const path = `cadastros/${params.cadastroId}/documentos/${parsed.tipo}`;
+  const docRef = doc(db, 'cadastros', params.cadastroId, 'documentos', parsed.tipo);
+
+  try {
+    if (params.alreadyExists) {
+      await updateDoc(docRef, {
+        nomeArquivo: parsed.nomeArquivo,
+        mimeType: parsed.mimeType,
+        tamanhoBytes: parsed.tamanhoBytes,
+        conteudoBase64: parsed.conteudoBase64,
+        atualizadoEm: serverTimestamp(),
+      });
+    } else {
+      await setDoc(docRef, {
+        tipo: parsed.tipo,
+        nomeArquivo: parsed.nomeArquivo,
+        mimeType: parsed.mimeType,
+        tamanhoBytes: parsed.tamanhoBytes,
+        conteudoBase64: parsed.conteudoBase64,
+        criadoEm: serverTimestamp(),
+        atualizadoEm: serverTimestamp(),
+      });
+    }
+
+    await recordAuditLog({
+      acao: 'ANEXOU_DOCUMENTO',
+      entidade: 'cadastros',
+      entidadeId: params.cadastroId,
+      cadastroId: params.cadastroId,
+      actor: params.actor,
+      detalhes: {
+        resumo: `${params.alreadyExists ? 'Substituiu' : 'Anexou'} documento (${parsed.tipo}): ${parsed.nomeArquivo}`,
+      },
+    });
+  } catch (error) {
+    handleFirestoreError(
+      error,
+      params.alreadyExists ? OperationType.UPDATE : OperationType.CREATE,
+      path
+    );
+  }
+}
+
+export async function deleteCadastroDocumento(params: {
+  cadastroId: string;
+  tipo: RegistrationDocumentType;
+  fileName: string;
+  actor: PanelUserProfile;
+}): Promise<void> {
+  const path = `cadastros/${params.cadastroId}/documentos/${params.tipo}`;
+  try {
+    await deleteDoc(doc(db, 'cadastros', params.cadastroId, 'documentos', params.tipo));
+    await recordAuditLog({
+      acao: 'EXCLUIU_DOCUMENTO',
+      entidade: 'cadastros',
+      entidadeId: params.cadastroId,
+      cadastroId: params.cadastroId,
+      actor: params.actor,
+      detalhes: {
+        resumo: `Excluiu documento (${params.tipo}): ${params.fileName}`,
+      },
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);

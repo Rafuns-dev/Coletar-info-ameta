@@ -18,6 +18,7 @@ import {
   setDoc,
   Timestamp,
   updateDoc,
+  writeBatch,
 } from 'firebase/firestore';
 
 const PROJECT_ID = 'demo-ameta-rules';
@@ -342,5 +343,57 @@ describe('Firestore Security Rules — Ameta Prestadores', () => {
     await assertFails(deleteDoc(auditAnonRef));
     await assertFails(deleteDoc(auditOpRef));
     await assertFails(deleteDoc(auditAdminRef));
+  });
+
+  it('9. Documentos opcionais (RG, CNH, MEI): criação atômica pública permitida, leitura anônima e anexo tardio negados', async () => {
+    const anonDb = testEnv.unauthenticatedContext().firestore();
+    const operadorDb = testEnv
+      .authenticatedContext('operador-uid', { email: 'operador@ameta.com.br' })
+      .firestore();
+    const adminDb = testEnv
+      .authenticatedContext('admin-uid', { email: 'admin@ameta.com.br' })
+      .firestore();
+
+    const validAttachment = (tipo: 'rg' | 'cnh' | 'certificado_mei') => ({
+      tipo,
+      nomeArquivo: `${tipo}.pdf`,
+      mimeType: 'application/pdf',
+      tamanhoBytes: 128,
+      conteudoBase64: 'JVBERi0xLjQK',
+      criadoEm: serverTimestamp(),
+      atualizadoEm: serverTimestamp(),
+    });
+
+    // Criação atômica de cadastro + documentos opcionais por visitante anônimo -> PERMITIDO
+    const batch = writeBatch(anonDb);
+    batch.set(doc(anonDb, 'cadastros', 'cad-com-anexos'), makeValidCadastroPayload());
+    batch.set(doc(anonDb, 'cadastros', 'cad-com-anexos', 'documentos', 'rg'), validAttachment('rg'));
+    batch.set(
+      doc(anonDb, 'cadastros', 'cad-com-anexos', 'documentos', 'certificado_mei'),
+      validAttachment('certificado_mei')
+    );
+    await assertSucceeds(batch.commit());
+
+    // Visitante anônimo NÃO pode anexar documento a um cadastro já existente
+    await assertFails(
+      setDoc(doc(anonDb, 'cadastros', 'cad-existente-1', 'documentos', 'cnh'), validAttachment('cnh'))
+    );
+
+    // Visitante anônimo NÃO pode ler ou listar documentos
+    await assertFails(getDoc(doc(anonDb, 'cadastros', 'cad-com-anexos', 'documentos', 'rg')));
+    await assertFails(getDocs(collection(anonDb, 'cadastros', 'cad-com-anexos', 'documentos')));
+
+    // Operador pode ler e anexar/atualizar documento, mas NÃO pode excluir
+    await assertSucceeds(getDocs(collection(operadorDb, 'cadastros', 'cad-com-anexos', 'documentos')));
+    await assertSucceeds(
+      setDoc(
+        doc(operadorDb, 'cadastros', 'cad-com-anexos', 'documentos', 'cnh'),
+        validAttachment('cnh')
+      )
+    );
+    await assertFails(deleteDoc(doc(operadorDb, 'cadastros', 'cad-com-anexos', 'documentos', 'rg')));
+
+    // Admin pode excluir documento
+    await assertSucceeds(deleteDoc(doc(adminDb, 'cadastros', 'cad-com-anexos', 'documentos', 'rg')));
   });
 });

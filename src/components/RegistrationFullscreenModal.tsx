@@ -6,19 +6,23 @@ import {
   ChevronRight,
   Copy,
   Download,
+  Eye,
   EyeOff,
   FileText,
   History,
   Loader2,
+  Paperclip,
   Pencil,
   Save,
   ScrollText,
   Trash2,
+  Upload,
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import {
+  deleteCadastroDocumento,
   deleteCadastroWithCascade,
   extractFriendlyFirestoreMessage,
   getCadastroById,
@@ -26,10 +30,12 @@ import {
   markCadastroViewed,
   recordTermRedownloadAudit,
   subscribeToAuditoriaByCadastro,
+  subscribeToDocumentosByCadastro,
   subscribeToTermosByCadastro,
   updateCadastroFull,
   updateCadastroNotes,
   updateCadastroStatus,
+  upsertCadastroDocumento,
 } from '../services/firestoreService.ts';
 import {
   MARITAL_STATUS_OPTIONS,
@@ -44,6 +50,8 @@ import {
   type ContractorRegistrationInput,
   type DiscountTermHistoryItem,
   type PanelUserProfile,
+  type RegistrationDocumentAttachment,
+  type RegistrationDocumentType,
 } from '../shared/schema.ts';
 import {
   formatCEP,
@@ -56,9 +64,17 @@ import {
 import { exportDiscountTermToDocx } from '../utils/discountTermDocx.ts';
 import { exportDiscountTermToPdf } from '../utils/discountTermPdf.ts';
 import {
+  buildAttachmentDataUrl,
+  downloadAttachmentFile,
+  formatBytesLabel,
+  prepareAttachmentFile,
+  REGISTRATION_DOCUMENT_SLOTS,
+} from '../utils/documentUpload.ts';
+import {
   exportRegistrationToPdf,
   formatRegistrationAsText,
 } from '../utils/pdfExport.ts';
+import { exportRegistrationToDocx } from '../utils/registrationDocx.ts';
 import { DiscountTermModal } from './DiscountTermModal.tsx';
 import { useToast } from './ToastProvider.tsx';
 
@@ -175,6 +191,11 @@ export function RegistrationFullscreenModal({
   const [termModalOpen, setTermModalOpen] = useState(false);
   const [terms, setTerms] = useState<DiscountTermHistoryItem[]>([]);
   const [expandedTermIds, setExpandedTermIds] = useState<Record<string, boolean>>({});
+  const [attachments, setAttachments] = useState<RegistrationDocumentAttachment[]>([]);
+  const [loadingAttachments, setLoadingAttachments] = useState(true);
+  const [uploadingDocType, setUploadingDocType] = useState<RegistrationDocumentType | null>(null);
+  const [deletingDocType, setDeletingDocType] = useState<RegistrationDocumentType | null>(null);
+  const [previewDoc, setPreviewDoc] = useState<RegistrationDocumentAttachment | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
   const [loadingTerms, setLoadingTerms] = useState(true);
   const [redownloadingKey, setRedownloadingKey] = useState<string | null>(null);
@@ -260,6 +281,18 @@ export function RegistrationFullscreenModal({
       }
     );
 
+    setLoadingAttachments(true);
+    const unsubDocumentos = subscribeToDocumentosByCadastro(
+      registrationId,
+      (docsList) => {
+        setAttachments(docsList);
+        setLoadingAttachments(false);
+      },
+      () => {
+        setLoadingAttachments(false);
+      }
+    );
+
     let unsubAuditoria = () => {};
     if (currentUser.role === 'admin') {
       unsubAuditoria = subscribeToAuditoriaByCadastro(
@@ -275,6 +308,7 @@ export function RegistrationFullscreenModal({
 
     return () => {
       unsubTermos();
+      unsubDocumentos();
       unsubAuditoria();
     };
   }, [registrationId, currentUser.role]);
@@ -282,6 +316,10 @@ export function RegistrationFullscreenModal({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        if (previewDoc) {
+          setPreviewDoc(null);
+          return;
+        }
         if (termModalOpen) {
           setTermModalOpen(false);
           return;
@@ -311,7 +349,57 @@ export function RegistrationFullscreenModal({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose, prevId, nextId, onSelectId, isEditing, confirmDeleteOpen, termModalOpen]);
+  }, [onClose, prevId, nextId, onSelectId, isEditing, confirmDeleteOpen, termModalOpen, previewDoc]);
+
+  const handleUploadAttachment = async (
+    tipo: RegistrationDocumentType,
+    file: File | null,
+    alreadyExists: boolean
+  ) => {
+    if (!file || !record) return;
+    setUploadingDocType(tipo);
+    try {
+      const prepared = await prepareAttachmentFile(file, tipo);
+      await upsertCadastroDocumento({
+        cadastroId: record.id,
+        attachment: prepared,
+        alreadyExists,
+        actor: currentUser,
+      });
+      showToast(alreadyExists ? 'Documento atualizado.' : 'Documento anexado ao cadastro.');
+    } catch (err) {
+      showToast(
+        extractFriendlyFirestoreMessage(err, 'Não foi possível salvar o documento.'),
+        'error'
+      );
+    } finally {
+      setUploadingDocType((curr) => (curr === tipo ? null : curr));
+    }
+  };
+
+  const handleDeleteAttachment = async (attachment: RegistrationDocumentAttachment) => {
+    if (!record || !isAdmin) return;
+    setDeletingDocType(attachment.tipo);
+    try {
+      await deleteCadastroDocumento({
+        cadastroId: record.id,
+        tipo: attachment.tipo,
+        fileName: attachment.nomeArquivo,
+        actor: currentUser,
+      });
+      if (previewDoc?.tipo === attachment.tipo) {
+        setPreviewDoc(null);
+      }
+      showToast('Documento excluído do cadastro.');
+    } catch (err) {
+      showToast(
+        extractFriendlyFirestoreMessage(err, 'Erro ao excluir documento.'),
+        'error'
+      );
+    } finally {
+      setDeletingDocType((curr) => (curr === attachment.tipo ? null : curr));
+    }
+  };
 
   const handleCopyAll = async () => {
     if (!record) return;
@@ -551,6 +639,18 @@ export function RegistrationFullscreenModal({
               >
                 <FileText className="h-3.5 w-3.5 text-[var(--text-muted)]" aria-hidden="true" />
                 <span className="hidden sm:inline">Exportar PDF</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  exportRegistrationToDocx(record);
+                  showToast('Word (.docx) da ficha gerado.');
+                }}
+                className="ameta-btn-interactive inline-flex h-10 items-center gap-1.5 px-3 rounded-[10px] border border-[var(--border-default)] bg-[var(--surface-card)] text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-hover)] whitespace-nowrap"
+              >
+                <Download className="h-3.5 w-3.5 text-[#1F2E85] dark:text-[#8fa2ff]" aria-hidden="true" />
+                <span className="hidden sm:inline">Exportar Word</span>
               </button>
 
               {isAdmin && (
@@ -1057,6 +1157,169 @@ export function RegistrationFullscreenModal({
                     </dl>
                   </section>
                 ))}
+
+                {/* Documentos opcionais anexados (RG, CNH, Certificado MEI) */}
+                <section className="bg-[var(--surface-card)] border border-[var(--border-default)] rounded-[12px] overflow-hidden shadow-[var(--shadow-card)]">
+                  <div className="px-5 py-3.5 border-b border-[var(--border-default)] bg-[var(--surface-subtle)] flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Paperclip className="h-4 w-4 text-[#229A9A]" aria-hidden="true" />
+                      <h2 className="text-sm font-semibold text-[var(--text-primary)]">
+                        Documentos anexados (RG, CNH, Certificado MEI)
+                      </h2>
+                    </div>
+                    <span className="text-[11px] font-medium text-[var(--text-muted)] tabular-nums">
+                      {attachments.length} de {REGISTRATION_DOCUMENT_SLOTS.length} enviados
+                    </span>
+                  </div>
+
+                  {loadingAttachments ? (
+                    <div className="p-5 text-xs text-[var(--text-muted)] flex items-center gap-2">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                      <span>Carregando documentos anexados...</span>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-[var(--border-default)]">
+                      {REGISTRATION_DOCUMENT_SLOTS.map((slot) => {
+                        const docItem = attachments.find((a) => a.tipo === slot.type);
+                        const isUploading = uploadingDocType === slot.type;
+                        const isDeletingDoc = deletingDocType === slot.type;
+                        const inputId = `admin-doc-upload-${record.id}-${slot.type}`;
+                        const isImage = docItem?.mimeType.startsWith('image/');
+
+                        return (
+                          <div
+                            key={slot.type}
+                            className="px-5 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                          >
+                            <div className="flex items-start gap-3 min-w-0 flex-1">
+                              {docItem ? (
+                                isImage ? (
+                                  <img
+                                    src={buildAttachmentDataUrl(docItem)}
+                                    alt={slot.title}
+                                    className="h-11 w-11 rounded-[8px] object-cover border border-[var(--border-default)] shrink-0"
+                                  />
+                                ) : (
+                                  <span className="inline-flex h-11 w-11 items-center justify-center rounded-[8px] bg-[#EEF1FC] dark:bg-[#1F2E85]/25 text-[#1F2E85] dark:text-[#8fa2ff] shrink-0">
+                                    <FileText className="h-5 w-5" aria-hidden="true" />
+                                  </span>
+                                )
+                              ) : (
+                                <span className="inline-flex h-11 w-11 items-center justify-center rounded-[8px] bg-[var(--surface-subtle)] border border-[var(--border-default)] text-[var(--text-muted)] shrink-0">
+                                  <Paperclip className="h-4 w-4" aria-hidden="true" />
+                                </span>
+                              )}
+
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-sm font-semibold text-[var(--text-primary)]">
+                                    {slot.title}
+                                  </span>
+                                  {docItem ? (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-[6px] border border-[var(--status-success-border)] bg-[var(--status-success-bg)] text-[10.5px] font-semibold text-[var(--status-success)]">
+                                      Anexado
+                                    </span>
+                                  ) : (
+                                    <span className="text-[11px] text-[var(--text-muted)]">
+                                      Não enviado (opcional)
+                                    </span>
+                                  )}
+                                </div>
+
+                                {docItem ? (
+                                  <p
+                                    className="mt-0.5 text-xs text-[var(--text-secondary)] truncate"
+                                    title={docItem.nomeArquivo}
+                                  >
+                                    {docItem.nomeArquivo} ·{' '}
+                                    <span className="tabular-nums">
+                                      {formatBytesLabel(docItem.tamanhoBytes)}
+                                    </span>{' '}
+                                    · {formatDateTimeBR(docItem.atualizadoEm)}
+                                  </p>
+                                ) : (
+                                  <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+                                    {slot.description}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2 shrink-0">
+                              {docItem && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => setPreviewDoc(docItem)}
+                                    className="inline-flex h-9 items-center gap-1.5 px-3 rounded-[8px] border border-[var(--border-default)] bg-[var(--surface-bg)] text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-hover)] transition-colors"
+                                  >
+                                    <Eye className="h-3.5 w-3.5 text-[#229A9A]" aria-hidden="true" />
+                                    <span>Visualizar</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      downloadAttachmentFile(docItem);
+                                      showToast(`Download de ${slot.title} iniciado.`);
+                                    }}
+                                    className="inline-flex h-9 items-center gap-1.5 px-3 rounded-[8px] border border-[var(--border-default)] bg-[var(--surface-bg)] text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-hover)] transition-colors"
+                                  >
+                                    <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                                    <span>Baixar</span>
+                                  </button>
+                                </>
+                              )}
+
+                              <label
+                                htmlFor={inputId}
+                                className={`inline-flex h-9 items-center gap-1.5 px-3 rounded-[8px] border border-[var(--border-default)] bg-[var(--surface-bg)] text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-hover)] cursor-pointer transition-colors ${
+                                  isUploading ? 'opacity-60 pointer-events-none' : ''
+                                }`}
+                              >
+                                {isUploading ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                                ) : (
+                                  <Upload className="h-3.5 w-3.5" aria-hidden="true" />
+                                )}
+                                <span>{docItem ? 'Substituir' : 'Anexar'}</span>
+                              </label>
+
+                              <input
+                                id={inputId}
+                                type="file"
+                                accept={slot.accept}
+                                disabled={isUploading || isDeletingDoc}
+                                className="sr-only"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0] ?? null;
+                                  e.target.value = '';
+                                  void handleUploadAttachment(slot.type, file, Boolean(docItem));
+                                }}
+                              />
+
+                              {docItem && isAdmin && (
+                                <button
+                                  type="button"
+                                  disabled={isDeletingDoc || isUploading}
+                                  onClick={() => void handleDeleteAttachment(docItem)}
+                                  title={`Excluir ${slot.title}`}
+                                  aria-label={`Excluir ${slot.title}`}
+                                  className="inline-flex h-9 w-9 items-center justify-center rounded-[8px] border border-[var(--status-error-border)] bg-[var(--surface-card)] text-[var(--status-error)] hover:bg-[var(--status-error-bg)] disabled:opacity-50 transition-colors"
+                                >
+                                  {isDeletingDoc ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                                  ) : (
+                                    <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                                  )}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </section>
               </div>
 
               {/* Coluna lateral: Observações internas, Termos gerados, Linha do tempo */}
@@ -1277,7 +1540,11 @@ export function RegistrationFullscreenModal({
                                           ? 'Baixou novamente (Word .docx)'
                                           : log.acao === 'REBAIXOU_TERMO_PDF'
                                             ? 'Baixou novamente (PDF)'
-                                            : log.acao;
+                                            : log.acao === 'ANEXOU_DOCUMENTO'
+                                              ? 'Anexou/atualizou documento'
+                                              : log.acao === 'EXCLUIU_DOCUMENTO'
+                                                ? 'Excluiu documento anexado'
+                                                : log.acao;
                           return (
                             <li key={log.id} className="relative pl-5 text-xs">
                               <span
@@ -1365,6 +1632,67 @@ export function RegistrationFullscreenModal({
                   <span>Confirmar exclusão</span>
                 )}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {previewDoc && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="preview-doc-title"
+          className="fixed inset-0 z-[65] flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-[1px]"
+        >
+          <div className="animate-modal-expand w-full max-w-4xl max-h-[90vh] flex flex-col bg-[var(--surface-card)] border border-[var(--border-default)] rounded-[12px] overflow-hidden shadow-[var(--shadow-elevated)]">
+            <div className="px-5 py-3.5 border-b border-[var(--border-default)] bg-[var(--surface-subtle)] flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <h2
+                  id="preview-doc-title"
+                  className="font-display text-sm font-bold text-[var(--text-primary)] truncate"
+                >
+                  {REGISTRATION_DOCUMENT_SLOTS.find((s) => s.type === previewDoc.tipo)?.title ||
+                    previewDoc.tipo}{' '}
+                  — {previewDoc.nomeArquivo}
+                </h2>
+                <p className="text-xs text-[var(--text-muted)] tabular-nums">
+                  {formatBytesLabel(previewDoc.tamanhoBytes)} · {previewDoc.mimeType}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => downloadAttachmentFile(previewDoc)}
+                  className="inline-flex h-9 items-center gap-1.5 px-3 rounded-[8px] bg-[#1F2E85] hover:bg-[#2536A8] text-xs font-semibold text-white"
+                >
+                  <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>Baixar</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreviewDoc(null)}
+                  aria-label="Fechar visualização"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-[8px] border border-[var(--border-default)] bg-[var(--surface-card)] text-[var(--text-primary)] hover:bg-[var(--surface-hover)]"
+                >
+                  <X className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-auto bg-[var(--surface-bg)] p-4 flex items-center justify-center min-h-[360px]">
+              {previewDoc.mimeType === 'application/pdf' ? (
+                <iframe
+                  src={buildAttachmentDataUrl(previewDoc)}
+                  title={previewDoc.nomeArquivo}
+                  className="w-full h-[70vh] rounded-[8px] border border-[var(--border-default)] bg-white"
+                />
+              ) : (
+                <img
+                  src={buildAttachmentDataUrl(previewDoc)}
+                  alt={previewDoc.nomeArquivo}
+                  className="max-w-full max-h-[70vh] rounded-[8px] object-contain border border-[var(--border-default)]"
+                />
+              )}
             </div>
           </div>
         </div>

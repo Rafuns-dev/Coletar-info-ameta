@@ -69,8 +69,10 @@ import { exportDiscountTermToDocx } from '../utils/discountTermDocx.ts';
 import { exportDiscountTermToPdf } from '../utils/discountTermPdf.ts';
 import {
   exportFilteredListToPdf,
+  exportRegistrationToPdf,
   formatRegistrationAsText,
 } from '../utils/pdfExport.ts';
+import { exportRegistrationToDocx } from '../utils/registrationDocx.ts';
 import {
   exportRegistrationsToCsv,
   exportRegistrationsToExcel,
@@ -2001,6 +2003,30 @@ export function AdminDashboardPage({
                                     type="button"
                                     onClick={() => {
                                       setRowMenuId(null);
+                                      exportRegistrationToPdf(item);
+                                      showToast('PDF da ficha gerado.');
+                                    }}
+                                    className="w-full px-3 h-9 rounded-[7px] text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-hover)] flex items-center gap-2"
+                                  >
+                                    <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+                                    <span>Baixar ficha (PDF)</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setRowMenuId(null);
+                                      exportRegistrationToDocx(item);
+                                      showToast('Word (.docx) da ficha gerado.');
+                                    }}
+                                    className="w-full px-3 h-9 rounded-[7px] text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-hover)] flex items-center gap-2"
+                                  >
+                                    <Download className="h-3.5 w-3.5 text-[#1F2E85] dark:text-[#8fa2ff]" aria-hidden="true" />
+                                    <span>Baixar ficha (Word)</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setRowMenuId(null);
                                       setQuickTermRecord(item);
                                     }}
                                     className="w-full px-3 h-9 rounded-[7px] text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-hover)] flex items-center gap-2"
@@ -2116,6 +2142,17 @@ export function AdminDashboardPage({
                             className="inline-flex h-9 w-9 items-center justify-center rounded-[8px] border border-[var(--border-default)] bg-[var(--surface-card)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
                           >
                             <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              exportRegistrationToDocx(item);
+                              showToast('Word (.docx) da ficha gerado.');
+                            }}
+                            title="Baixar ficha em Word (.docx)"
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-[8px] border border-[var(--border-default)] bg-[var(--surface-card)] text-[#1F2E85] dark:text-[#8fa2ff] hover:bg-[var(--surface-hover)]"
+                          >
+                            <Download className="h-3.5 w-3.5" aria-hidden="true" />
                           </button>
                           <button
                             type="button"
