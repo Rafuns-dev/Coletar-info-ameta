@@ -36,11 +36,14 @@ import { RegistrationFullscreenModal } from '../components/RegistrationFullscree
 import { useToast } from '../components/ToastProvider.tsx';
 import {
   extractFriendlyFirestoreMessage,
+  fetchCadastrosPageWithCursor,
+  fetchFilteredCadastrosFromFirestore,
   recordTermRedownloadAudit,
   subscribeToAllAuditoria,
   subscribeToAllTermos,
   subscribeToCadastros,
   updateCadastroStatus,
+  type CadastroCursor,
 } from '../services/firestoreService.ts';
 import {
   MARITAL_STATUS_OPTIONS,
@@ -296,11 +299,19 @@ export function AdminDashboardPage({
   const [retryCounter, setRetryCounter] = useState(0);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [exportingPdf, setExportingPdf] = useState(false);
+  const [exportingSpreadsheet, setExportingSpreadsheet] = useState<'csv' | 'xlsx' | null>(null);
   const [newArrivalToast, setNewArrivalToast] = useState<{
     id: string;
     fullName: string;
     role: string;
   } | null>(null);
+
+  // Paginação por cursor do Firestore na aba Cadastros
+  const [cursorItems, setCursorItems] = useState<ContractorRegistrationDetail[] | null>(null);
+  const [cursorTotal, setCursorTotal] = useState<number | null>(null);
+  const [cursorLoading, setCursorLoading] = useState(false);
+  const cursorMapRef = useRef<Map<number, CadastroCursor>>(new Map([[1, null]]));
+  const lastCursorSignatureRef = useRef<string>('');
 
   // Termos gerados (para KPI mensal e aba Termos)
   const [allTerms, setAllTerms] = useState<DiscountTermHistoryItem[]>([]);
@@ -549,19 +560,146 @@ export function AdminDashboardPage({
     ]
   );
 
+  const canUseFirestoreCursor =
+    activeSection === 'cadastros' &&
+    !debouncedSearch.trim() &&
+    !dateFrom &&
+    !dateTo &&
+    !debouncedBirthPlace.trim() &&
+    !debouncedNationality.trim() &&
+    selectedRoles.length <= 1;
+
+  const cursorFilterSignature = useMemo(
+    () =>
+      JSON.stringify([
+        statusFilter,
+        selectedRoles[0] ?? '',
+        maritalStatus,
+        unseenOnly,
+        sort,
+      ]),
+    [statusFilter, selectedRoles, maritalStatus, unseenOnly, sort]
+  );
+
+  const realtimeRefreshKey = useMemo(
+    () => `${allRecords.length}:${allRecords[0]?.updatedAt || ''}:${retryCounter}`,
+    [allRecords, retryCounter]
+  );
+
+  useEffect(() => {
+    if (!canUseFirestoreCursor) {
+      return;
+    }
+
+    if (lastCursorSignatureRef.current !== cursorFilterSignature) {
+      cursorMapRef.current = new Map([[1, null]]);
+      lastCursorSignatureRef.current = cursorFilterSignature;
+    }
+
+    let cancelled = false;
+    setCursorLoading(true);
+
+    const loadCursorPage = async () => {
+      try {
+        // Caso o usuário abra diretamente ?page=N, avança pelos cursores até N
+        let highestKnown = 1;
+        for (const p of cursorMapRef.current.keys()) {
+          if (p <= page && p > highestKnown) {
+            highestKnown = p;
+          }
+        }
+
+        for (let stepPage = highestKnown; stepPage < page; stepPage++) {
+          const stepRes = await fetchCadastrosPageWithCursor({
+            pageSize,
+            page: stepPage,
+            cursor: cursorMapRef.current.get(stepPage) ?? null,
+            status: statusFilter,
+            role: selectedRoles[0] || undefined,
+            maritalStatus,
+            unseenOnly,
+            sort,
+          });
+          if (cancelled) return;
+          if (!stepRes.hasMore) {
+            setPage(stepPage);
+            setCursorItems(stepRes.items);
+            setCursorTotal(stepRes.totalMatching);
+            return;
+          }
+          if (stepRes.nextCursor) {
+            cursorMapRef.current.set(stepPage + 1, stepRes.nextCursor);
+          }
+        }
+
+        const result = await fetchCadastrosPageWithCursor({
+          pageSize,
+          page,
+          cursor: cursorMapRef.current.get(page) ?? null,
+          status: statusFilter,
+          role: selectedRoles[0] || undefined,
+          maritalStatus,
+          unseenOnly,
+          sort,
+        });
+
+        if (cancelled) return;
+
+        if (result.hasMore && result.nextCursor) {
+          cursorMapRef.current.set(page + 1, result.nextCursor);
+        }
+
+        setCursorItems(result.items);
+        setCursorTotal(result.totalMatching);
+      } catch {
+        if (!cancelled) {
+          setCursorItems(null);
+          setCursorTotal(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setCursorLoading(false);
+        }
+      }
+    };
+
+    void loadCursorPage();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    canUseFirestoreCursor,
+    cursorFilterSignature,
+    page,
+    pageSize,
+    statusFilter,
+    selectedRoles,
+    maritalStatus,
+    unseenOnly,
+    sort,
+    realtimeRefreshKey,
+  ]);
+
   const orderedIds = useMemo(
     () => filteredRecords.map((item) => item.id),
     [filteredRecords]
   );
 
-  const total = filteredRecords.length;
+  const usingCursorData = canUseFirestoreCursor && cursorItems !== null && cursorTotal !== null;
+  const total = usingCursorData ? cursorTotal : filteredRecords.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const safePage = Math.min(page, totalPages);
 
   const items = useMemo(() => {
+    if (usingCursorData) {
+      return cursorItems;
+    }
     const start = (safePage - 1) * pageSize;
     return filteredRecords.slice(start, start + pageSize);
-  }, [filteredRecords, safePage, pageSize]);
+  }, [usingCursorData, cursorItems, filteredRecords, safePage, pageSize]);
+
+  const listLoading = loading || (canUseFirestoreCursor && cursorLoading && cursorItems === null);
 
   const openFullscreen = useCallback(
     (id: string) => {
@@ -608,34 +746,69 @@ export function AdminDashboardPage({
     setPage(1);
   };
 
-  const getExportTargetRecords = (): ContractorRegistrationDetail[] => {
+  const getExportTargetRecordsFromFirestore = async (): Promise<
+    ContractorRegistrationDetail[]
+  > => {
+    const freshRecords = await fetchFilteredCadastrosFromFirestore({
+      search: debouncedSearch,
+      roles: selectedRoles,
+      maritalStatus,
+      status: statusFilter,
+      dateFrom,
+      dateTo,
+      birthPlace: debouncedBirthPlace,
+      nationality: debouncedNationality,
+      unseenOnly,
+      sort,
+    });
     if (selectedIds.length === 0) {
-      return filteredRecords;
+      return freshRecords;
     }
     const selectedSet = new Set(selectedIds);
-    return filteredRecords.filter((item) => selectedSet.has(item.id));
+    return freshRecords.filter((item) => selectedSet.has(item.id));
   };
 
-  const handleExportSpreadsheet = (format: 'csv' | 'xlsx') => {
-    const targetRecords = getExportTargetRecords();
-    if (targetRecords.length === 0) return;
+  const handleExportSpreadsheet = async (format: 'csv' | 'xlsx') => {
+    setExportingSpreadsheet(format);
+    try {
+      const targetRecords = await getExportTargetRecordsFromFirestore();
+      if (targetRecords.length === 0) {
+        showToast('Nenhum cadastro disponível para exportação.', 'error');
+        return;
+      }
 
-    if (format === 'csv') {
-      exportRegistrationsToCsv(targetRecords);
-      showToast(`Arquivo CSV exportado (${targetRecords.length} registro(s)).`);
-    } else {
-      exportRegistrationsToExcel(targetRecords);
-      showToast(`Planilha Excel exportada (${targetRecords.length} registro(s)).`);
+      if (format === 'csv') {
+        exportRegistrationsToCsv(targetRecords);
+        showToast(`Arquivo CSV exportado (${targetRecords.length} registro(s)).`);
+      } else {
+        exportRegistrationsToExcel(targetRecords);
+        showToast(`Planilha Excel exportada (${targetRecords.length} registro(s)).`);
+      }
+    } catch (err) {
+      showToast(
+        extractFriendlyFirestoreMessage(err, 'Não foi possível exportar a planilha.'),
+        'error'
+      );
+    } finally {
+      setExportingSpreadsheet(null);
     }
   };
 
-  const handleExportFilteredPdf = () => {
-    const targetRecords = getExportTargetRecords();
-    if (targetRecords.length === 0) return;
+  const handleExportFilteredPdf = async () => {
     setExportingPdf(true);
     try {
+      const targetRecords = await getExportTargetRecordsFromFirestore();
+      if (targetRecords.length === 0) {
+        showToast('Nenhum cadastro disponível para exportação.', 'error');
+        return;
+      }
       exportFilteredListToPdf(targetRecords);
       showToast(`Relatório PDF gerado (${targetRecords.length} registro(s)).`);
+    } catch (err) {
+      showToast(
+        extractFriendlyFirestoreMessage(err, 'Não foi possível gerar o PDF.'),
+        'error'
+      );
     } finally {
       setExportingPdf(false);
     }
@@ -881,18 +1054,22 @@ export function AdminDashboardPage({
       <>
         <button
           type="button"
-          onClick={() => handleExportSpreadsheet('csv')}
-          disabled={loading || total === 0}
+          onClick={() => void handleExportSpreadsheet('csv')}
+          disabled={listLoading || total === 0 || exportingSpreadsheet !== null || exportingPdf}
           className="ameta-btn-interactive inline-flex h-10 items-center gap-2 px-3.5 rounded-[10px] border border-[var(--border-default)] bg-[var(--surface-card)] text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--surface-hover)] disabled:opacity-50 whitespace-nowrap shrink-0"
         >
-          <Download className="h-3.5 w-3.5 text-[var(--text-muted)]" aria-hidden="true" />
+          {exportingSpreadsheet === 'csv' ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+          ) : (
+            <Download className="h-3.5 w-3.5 text-[var(--text-muted)]" aria-hidden="true" />
+          )}
           <span>{selectedIds.length > 0 ? `CSV (${selectedIds.length})` : 'Exportar CSV'}</span>
         </button>
 
         <button
           type="button"
-          onClick={handleExportFilteredPdf}
-          disabled={loading || total === 0 || exportingPdf}
+          onClick={() => void handleExportFilteredPdf()}
+          disabled={listLoading || total === 0 || exportingPdf || exportingSpreadsheet !== null}
           className="ameta-btn-interactive inline-flex h-10 items-center gap-2 px-3.5 rounded-[10px] border border-[var(--border-default)] bg-[var(--surface-card)] text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--surface-hover)] disabled:opacity-50 whitespace-nowrap shrink-0"
         >
           {exportingPdf ? (
@@ -907,11 +1084,15 @@ export function AdminDashboardPage({
 
         <button
           type="button"
-          onClick={() => handleExportSpreadsheet('xlsx')}
-          disabled={loading || total === 0}
+          onClick={() => void handleExportSpreadsheet('xlsx')}
+          disabled={listLoading || total === 0 || exportingSpreadsheet !== null || exportingPdf}
           className="ameta-btn-interactive inline-flex h-10 items-center gap-2 px-4 rounded-[10px] bg-[#1F2E85] hover:bg-[#2536A8] text-xs font-semibold text-white shadow-sm disabled:opacity-50 whitespace-nowrap shrink-0"
         >
-          <FileSpreadsheet className="h-3.5 w-3.5 text-[#5eead4]" aria-hidden="true" />
+          {exportingSpreadsheet === 'xlsx' ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-[#5eead4]" aria-hidden="true" />
+          ) : (
+            <FileSpreadsheet className="h-3.5 w-3.5 text-[#5eead4]" aria-hidden="true" />
+          )}
           <span>
             {selectedIds.length > 0 ? `Exportar Excel (${selectedIds.length})` : 'Exportar Excel'}
           </span>
@@ -1145,10 +1326,27 @@ export function AdminDashboardPage({
 
             <button
               type="button"
-              disabled={allRecords.length === 0}
-              onClick={() => {
-                exportRegistrationsToExcel(allRecords);
-                showToast(`Planilha Excel exportada (${allRecords.length} registro(s)).`);
+              disabled={allRecords.length === 0 || exportingSpreadsheet !== null}
+              onClick={async () => {
+                setExportingSpreadsheet('xlsx');
+                try {
+                  const freshRecords = await fetchFilteredCadastrosFromFirestore({
+                    sort: 'registrationDate:desc',
+                  });
+                  if (freshRecords.length === 0) {
+                    showToast('Nenhum cadastro disponível para exportação.', 'error');
+                    return;
+                  }
+                  exportRegistrationsToExcel(freshRecords);
+                  showToast(`Planilha Excel exportada (${freshRecords.length} registro(s)).`);
+                } catch (err) {
+                  showToast(
+                    extractFriendlyFirestoreMessage(err, 'Não foi possível exportar a planilha.'),
+                    'error'
+                  );
+                } finally {
+                  setExportingSpreadsheet(null);
+                }
               }}
               className="ameta-btn-interactive flex items-center justify-between gap-4 p-5 rounded-[12px] bg-[var(--surface-card)] border border-[var(--border-default)] hover:border-[#1F2E85] text-[var(--text-primary)] shadow-[var(--shadow-card)] text-left disabled:opacity-50"
             >
@@ -1159,7 +1357,11 @@ export function AdminDashboardPage({
                 </p>
               </div>
               <span className="h-10 w-10 rounded-[10px] bg-[var(--status-info-bg)] text-[#1F2E85] dark:text-[#8fa2ff] flex items-center justify-center shrink-0">
-                <FileSpreadsheet className="h-5 w-5" aria-hidden="true" />
+                {exportingSpreadsheet === 'xlsx' ? (
+                  <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
+                ) : (
+                  <FileSpreadsheet className="h-5 w-5" aria-hidden="true" />
+                )}
               </span>
             </button>
           </section>
@@ -1788,7 +1990,7 @@ export function AdminDashboardPage({
                   Tentar novamente
                 </button>
               </div>
-            ) : loading ? (
+            ) : listLoading ? (
               <div className="divide-y divide-[var(--border-default)]">
                 {Array.from({ length: 6 }).map((_, idx) => (
                   <div key={idx} className="px-4 py-4 flex items-center gap-4 animate-pulse">

@@ -34,23 +34,34 @@ function parseEmulatorHost(): { host: string; port: number } {
 }
 
 function makeValidCadastroPayload(overrides: Record<string, unknown> = {}) {
+  const fullName = String(overrides.nomeCompleto ?? 'João Pedro Almeida');
+  const cpf = String(overrides.cpf ?? '123.456.789-01');
+  const cnpj = String(overrides.cnpj ?? '12.345.678/0001-90');
+  const cep = String(overrides.cepEmpresa ?? '01310-100');
+  const phone = String(overrides.telefone ?? '(11) 98765-4321');
+
   return {
     dataCadastro: '2026-11-18',
     funcao: 'Técnico de Instalação',
-    nomeCompleto: 'João Pedro Almeida',
-    cpf: '123.456.789-01',
+    nomeCompleto: fullName,
+    nomeCompletoLower: fullName.toLowerCase(),
+    cpf,
+    cpfDigitos: cpf.replace(/\D/g, ''),
     rg: '12.345.678-9',
     naturalidade: 'São Paulo',
     nacionalidade: 'Brasileira',
     estadoCivil: 'Solteiro(a)',
     dataNascimento: '1992-05-14',
-    cnpj: '12.345.678/0001-90',
+    cnpj,
+    cnpjDigitos: cnpj.replace(/\D/g, ''),
     enderecoEmpresa: 'Av. Paulista, 1000, Conjunto 42 - São Paulo/SP',
-    cepEmpresa: '01310-100',
+    cepEmpresa: cep,
+    cepDigitos: cep.replace(/\D/g, ''),
     nomePai: 'Carlos Almeida',
     nomeMae: 'Maria José Almeida',
     email: 'joao.almeida@empresa.com.br',
-    telefone: '(11) 98765-4321',
+    telefone: phone,
+    telefoneDigitos: phone.replace(/\D/g, ''),
     status: 'Novo',
     observacoes: '',
     visto: false,
@@ -115,6 +126,20 @@ beforeEach(async () => {
       atualizadoEm: now,
     });
 
+    await setDoc(doc(db, 'cadastros_chaves', 'cpf_12345678901'), {
+      tipo: 'cpf',
+      valorDigitos: '12345678901',
+      cadastroId: 'cad-existente-1',
+      criadoEm: now,
+    });
+
+    await setDoc(doc(db, 'cadastros_chaves', 'cnpj_12345678000190'), {
+      tipo: 'cnpj',
+      valorDigitos: '12345678000190',
+      cadastroId: 'cad-existente-1',
+      criadoEm: now,
+    });
+
     await setDoc(doc(db, 'auditoria', 'audit-existente-1'), {
       acao: 'LOGIN',
       entidade: 'sessao',
@@ -134,10 +159,27 @@ after(async () => {
 });
 
 describe('Firestore Security Rules — Ameta Prestadores', () => {
-  it('1. Visitante sem login cria cadastro válido com exatamente os 16 campos -> PERMITIDO', async () => {
+  it('1. Visitante sem login cria cadastro válido com exatamente os 16 campos e chaves de unicidade -> PERMITIDO', async () => {
     const anonDb = testEnv.unauthenticatedContext().firestore();
-    const ref = doc(anonDb, 'cadastros', 'cad-publico-ok');
-    await assertSucceeds(setDoc(ref, makeValidCadastroPayload()));
+    const payload = makeValidCadastroPayload({
+      cpf: '390.533.447-05',
+      cnpj: '11.222.333/0001-81',
+    });
+    const batch = writeBatch(anonDb);
+    batch.set(doc(anonDb, 'cadastros', 'cad-publico-ok'), payload);
+    batch.set(doc(anonDb, 'cadastros_chaves', 'cpf_39053344705'), {
+      tipo: 'cpf',
+      valorDigitos: '39053344705',
+      cadastroId: 'cad-publico-ok',
+      criadoEm: serverTimestamp(),
+    });
+    batch.set(doc(anonDb, 'cadastros_chaves', 'cnpj_11222333000181'), {
+      tipo: 'cnpj',
+      valorDigitos: '11222333000181',
+      cadastroId: 'cad-publico-ok',
+      criadoEm: serverTimestamp(),
+    });
+    await assertSucceeds(batch.commit());
   });
 
   it('2. Visitante sem login com campo extra, campo faltando, função inválida ou status != "Novo" -> NEGADO', async () => {
@@ -364,9 +406,25 @@ describe('Firestore Security Rules — Ameta Prestadores', () => {
       atualizadoEm: serverTimestamp(),
     });
 
-    // Criação atômica de cadastro + documentos opcionais por visitante anônimo -> PERMITIDO
+    // Criação atômica de cadastro + chaves únicas + documentos opcionais por visitante anônimo -> PERMITIDO
+    const payloadComAnexos = makeValidCadastroPayload({
+      cpf: '529.982.247-25',
+      cnpj: '27.865.757/0001-02',
+    });
     const batch = writeBatch(anonDb);
-    batch.set(doc(anonDb, 'cadastros', 'cad-com-anexos'), makeValidCadastroPayload());
+    batch.set(doc(anonDb, 'cadastros', 'cad-com-anexos'), payloadComAnexos);
+    batch.set(doc(anonDb, 'cadastros_chaves', 'cpf_52998224725'), {
+      tipo: 'cpf',
+      valorDigitos: '52998224725',
+      cadastroId: 'cad-com-anexos',
+      criadoEm: serverTimestamp(),
+    });
+    batch.set(doc(anonDb, 'cadastros_chaves', 'cnpj_27865757000102'), {
+      tipo: 'cnpj',
+      valorDigitos: '27865757000102',
+      cadastroId: 'cad-com-anexos',
+      criadoEm: serverTimestamp(),
+    });
     batch.set(doc(anonDb, 'cadastros', 'cad-com-anexos', 'documentos', 'rg'), validAttachment('rg'));
     batch.set(
       doc(anonDb, 'cadastros', 'cad-com-anexos', 'documentos', 'certificado_mei'),
@@ -395,5 +453,43 @@ describe('Firestore Security Rules — Ameta Prestadores', () => {
 
     // Admin pode excluir documento
     await assertSucceeds(deleteDoc(doc(adminDb, 'cadastros', 'cad-com-anexos', 'documentos', 'rg')));
+  });
+
+  it('10. Chaves únicas (cadastros_chaves): bloqueia duplicidade de CPF/CNPJ e impede leitura/alteração pública', async () => {
+    const anonDb = testEnv.unauthenticatedContext().firestore();
+    const adminDb = testEnv
+      .authenticatedContext('admin-uid', { email: 'admin@ameta.com.br' })
+      .firestore();
+
+    // Visitante não pode ler nem listar cadastros_chaves
+    await assertFails(getDoc(doc(anonDb, 'cadastros_chaves', 'cpf_12345678901')));
+    await assertFails(getDocs(collection(anonDb, 'cadastros_chaves')));
+
+    // Tentativa de cadastrar outro prestador com mesmo CPF já existente -> NEGADO
+    const dupBatch = writeBatch(anonDb);
+    dupBatch.set(
+      doc(anonDb, 'cadastros', 'cad-duplicado'),
+      makeValidCadastroPayload({ cnpj: '33.444.555/0001-66' })
+    );
+    dupBatch.set(doc(anonDb, 'cadastros_chaves', 'cpf_12345678901'), {
+      tipo: 'cpf',
+      valorDigitos: '12345678901',
+      cadastroId: 'cad-duplicado',
+      criadoEm: serverTimestamp(),
+    });
+    dupBatch.set(doc(anonDb, 'cadastros_chaves', 'cnpj_33444555000166'), {
+      tipo: 'cnpj',
+      valorDigitos: '33444555000166',
+      cadastroId: 'cad-duplicado',
+      criadoEm: serverTimestamp(),
+    });
+    await assertFails(dupBatch.commit());
+
+    // Ninguém pode dar update em cadastros_chaves
+    await assertFails(
+      updateDoc(doc(adminDb, 'cadastros_chaves', 'cpf_12345678901'), {
+        cadastroId: 'outro-id',
+      })
+    );
   });
 });

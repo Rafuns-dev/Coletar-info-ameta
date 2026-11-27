@@ -8,6 +8,7 @@
    - `admin` (`ativo == true`): possui todas as permissões de operador, além de editar os 16 campos de `cadastros`, excluir `cadastros`/`termos`, ler/listar `auditoria` e criar/ler/atualizar/excluir `usuarios` (impedido de desativar, rebaixar ou remover o próprio acesso).
 4. **Imutabilidade de auditoria e termos**: Registros em `/termos` e `/auditoria` nunca podem ser alterados (`allow update: if false;`), e registros em `/auditoria` nunca podem ser excluídos (`allow delete: if false;`).
 5. **Documentos opcionais (`/cadastros/{cadastroId}/documentos/{docTipo}`)**: Aceita apenas os tipos `rg`, `cnh` e `certificado_mei`, com MIME permitido (`application/pdf`, `image/jpeg`, `image/png`, `image/webp`) e tamanho máximo de 700 KB (`conteudoBase64 <= 950000`). Visitantes só podem criar atomicamente junto com o novo cadastro (`getAfter(...).data.criadoEm == request.time`), nunca ler, listar, alterar ou anexar a cadastros já existentes.
+6. **Bloqueio de duplicidade de CPF e CNPJ (`/cadastros_chaves/{chaveId}`)**: Cada cadastro público exige criação atômica das chaves `cpf_<11 dígitos>` e `cnpj_<14 dígitos>` (`update` sempre negado), impedindo dois cadastros com o mesmo CPF ou CNPJ sem expor leitura pública (`allow get, list: if admin();`).
 
 ## 2. Payloads Adversariais ("Dirty Dozen")
 1. **Leitura anônima em `cadastros` ou `documentos`**: Visitante sem login executa `getDoc`/`getDocs` em `cadastros` ou `cadastros/{id}/documentos` -> `PERMISSION_DENIED`.

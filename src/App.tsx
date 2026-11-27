@@ -11,8 +11,10 @@ import { AdminLoginPage } from './pages/AdminLoginPage.tsx';
 import { AdminUsersPage } from './pages/AdminUsersPage.tsx';
 import { PublicFormPage } from './pages/PublicFormPage.tsx';
 import {
+  extractFirebaseErrorDetails,
+  extractFriendlyFirestoreMessage,
   recordSessionAudit,
-  resolvePanelUserProfile,
+  resolvePanelUserAccess,
 } from './services/firestoreService.ts';
 import type { PanelUserProfile } from './shared/schema.ts';
 
@@ -111,31 +113,58 @@ function AppRoutes() {
             }
 
             try {
-              const profile = await Promise.race([
-                resolvePanelUserProfile(firebaseUser),
-                new Promise<null>((_, reject) => {
-                  window.setTimeout(() => reject(new Error('timeout')), 6000);
+              const access = await Promise.race([
+                resolvePanelUserAccess(firebaseUser),
+                new Promise<never>((_, reject) => {
+                  window.setTimeout(
+                    () => reject(new Error('Tempo limite ao validar perfil em usuarios/{uid}.')),
+                    15000
+                  );
                 }),
               ]);
               if (!active) return;
               settled = true;
               window.clearTimeout(safetyTimer);
-              if (!profile) {
-                await signOut(auth).catch(() => {});
-                setPanelUser(null);
-                setLoginNotice('Acesso não autorizado.');
-              } else {
+              if (access.status === 'authorized') {
                 lastActivityRef.current = Date.now();
                 setLoginNotice(null);
-                setPanelUser(profile);
+                setPanelUser(access.profile);
+              } else {
+                await signOut(auth).catch(() => {});
+                setPanelUser(null);
+                if (access.status === 'missing_doc') {
+                  setLoginNotice(
+                    `Autenticado no Firebase Auth, mas o documento usuarios/${access.uid} não existe no banco "${access.databaseId}".`
+                  );
+                } else if (access.status === 'inactive') {
+                  setLoginNotice(
+                    `Acesso bloqueado: o documento usuarios/${access.profile.uid} está com ativo = false.`
+                  );
+                } else {
+                  setLoginNotice(
+                    `Acesso negado: o campo role ("${access.rawRole}") em usuarios/${access.uid} não possui permissão para o painel.`
+                  );
+                }
               }
-            } catch {
+            } catch (err) {
               if (!active) return;
               settled = true;
               window.clearTimeout(safetyTimer);
+              const details = extractFirebaseErrorDetails(err);
+              console.error('[Ameta Sessão - Erro Firebase]', {
+                code: details.code || null,
+                message: details.message,
+                error: err,
+              });
               await signOut(auth).catch(() => {});
               setPanelUser(null);
-              setLoginNotice('Não foi possível validar sua sessão. Entre novamente.');
+              setLoginNotice(
+                extractFriendlyFirestoreMessage(
+                  err,
+                  'Não foi possível validar sua sessão no Firestore.',
+                  true
+                )
+              );
             } finally {
               if (active) {
                 settled = true;
@@ -244,6 +273,12 @@ function AppRoutes() {
     lastActivityRef.current = Date.now();
     setIdleWarningVisible(false);
   };
+
+  useEffect(() => {
+    if (isAdminRoute && authChecked && !panelUser && pathname !== '/admin/login') {
+      navigate('/admin/login');
+    }
+  }, [isAdminRoute, authChecked, panelUser, pathname, navigate]);
 
   if (!isAdminRoute) {
     return <PublicFormPage onNavigate={navigate} />;

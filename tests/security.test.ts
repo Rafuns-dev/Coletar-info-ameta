@@ -20,16 +20,24 @@ test('firestore.rules bloqueia leitura pública de cadastros, valida os 16 campo
   // Visitante não autenticado só pode criar em /cadastros; leitura/atualização exige usuário ativo do painel; exclusão só administrador
   assert.match(rulesText, /match \/cadastros\/\{cadastroId\}/);
   assert.match(rulesText, /allow get, list:\s*if equipe\(\);/);
-  assert.match(rulesText, /allow create:\s*if isValidId\(cadastroId\)\s*&& isValidCadastro\(incoming\(\)\)/);
+  assert.match(rulesText, /allow create:\s*if isValidId\(cadastroId\)\s*&& isValidCadastro\(incoming\(\)\)\s*&& hasNormalizedCadastroFields\(incoming\(\)\)/);
+  assert.match(rulesText, /existsAfter\(\/databases\/\$\(database\)\/documents\/cadastros_chaves\/\$\('cpf_' \+ incoming\(\)\.cpfDigitos\)\)/);
+  assert.match(rulesText, /existsAfter\(\/databases\/\$\(database\)\/documents\/cadastros_chaves\/\$\('cnpj_' \+ incoming\(\)\.cnpjDigitos\)\)/);
   assert.match(rulesText, /allow update:\s*if equipe\(\)/);
   assert.match(rulesText, /affectedKeys\(\)\.hasOnly\(\[\s*'status',\s*'observacoes',\s*'visto',\s*'vistoEm',\s*'atualizadoEm'\s*\]\)/);
-  assert.match(rulesText, /allow delete:\s*if admin\(\)/);
+  assert.match(rulesText, /allow delete:\s*if isAdmin\(\)/);
 
   // Bloqueio explícito de estado inicial na criação pública
   assert.match(rulesText, /incoming\(\)\.status == 'Novo'/);
   assert.match(rulesText, /incoming\(\)\.visto == false/);
   assert.match(rulesText, /incoming\(\)\.vistoEm == null/);
   assert.match(rulesText, /incoming\(\)\.observacoes == ''/);
+
+  // Regras de chaves únicas anti-duplicidade (sem leitura pública e imutáveis)
+  assert.match(rulesText, /match \/cadastros_chaves\/\{chaveId\}/);
+  assert.match(rulesText, /allow get, list:\s*if isAdmin\(\);/);
+  assert.match(rulesText, /allow update:\s*if false;/);
+  assert.match(rulesText, /allow delete:\s*if isAdmin\(\) && isValidId\(chaveId\);/);
 
   // Regras de documentos opcionais (RG, CNH, Certificado MEI)
   assert.match(rulesText, /match \/documentos\/\{docTipo\}/);
@@ -42,9 +50,9 @@ test('firestore.rules bloqueia leitura pública de cadastros, valida os 16 campo
   assert.match(rulesText, /data\.documentosSelecionados is list/);
   assert.match(rulesText, /data\.documentosSelecionados\.size\(\) >= 1/);
   assert.match(rulesText, /match \/usuarios\/\{uid\}/);
-  assert.match(rulesText, /allow list:\s*if admin\(\);/);
+  assert.match(rulesText, /allow list:\s*if isAdmin\(\);/);
   assert.match(rulesText, /match \/auditoria\/\{auditoriaId\}/);
-  assert.match(rulesText, /allow get, list:\s*if admin\(\);/);
+  assert.match(rulesText, /allow get, list:\s*if isAdmin\(\);/);
   assert.match(rulesText, /allow create:\s*if equipe\(\)[\s\S]*incoming\(\)\.uid == request\.auth\.uid/);
   assert.match(rulesText, /allow update, delete:\s*if false;/);
 

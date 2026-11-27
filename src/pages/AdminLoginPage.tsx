@@ -8,10 +8,12 @@ import { AlertCircle, ArrowLeft, CheckCircle2, Eye, EyeOff, Loader2, Lock, Shiel
 import { useEffect, useState, type FormEvent } from 'react';
 import { AmetaLogo } from '../components/AmetaLogo.tsx';
 import { ThemeToggle } from '../components/ThemeToggle.tsx';
-import { auth, authPersistenceReady } from '../firebase.ts';
+import { auth, authPersistenceReady, firebaseRuntimeConfig } from '../firebase.ts';
 import {
+  extractFirebaseErrorDetails,
+  extractFriendlyFirestoreMessage,
   recordSessionAudit,
-  resolvePanelUserProfile,
+  resolvePanelUserAccess,
 } from '../services/firestoreService.ts';
 import type { PanelUserProfile } from '../shared/schema.ts';
 
@@ -24,24 +26,36 @@ interface AdminLoginPageProps {
 }
 
 function mapFirebaseAuthError(error: unknown): string {
+  const details = extractFirebaseErrorDetails(
+    error,
+    'Falha desconhecida ao autenticar.'
+  );
+
   if (error instanceof FirebaseError) {
     switch (error.code) {
       case 'auth/invalid-credential':
       case 'auth/wrong-password':
       case 'auth/user-not-found':
       case 'auth/invalid-email':
-        return 'E-mail ou senha incorretos.';
+        return `E-mail ou senha incorretos. (${error.code}: ${error.message})`;
       case 'auth/too-many-requests':
-        return 'Muitas tentativas seguidas. Acesso temporariamente bloqueado; aguarde alguns minutos ou utilize "Esqueci minha senha".';
+        return `Muitas tentativas seguidas. Acesso temporariamente bloqueado; aguarde alguns minutos ou utilize "Esqueci minha senha". (${error.code}: ${error.message})`;
       case 'auth/user-disabled':
-        return 'Acesso não autorizado.';
+        return `Esta conta foi desativada no Firebase Authentication. (${error.code}: ${error.message})`;
+      case 'auth/operation-not-allowed':
+        return `Login por E-mail/Senha ainda não está ativado no Console do Firebase. (${error.code}: ${error.message})`;
       case 'auth/network-request-failed':
-        return 'Falha de conexão com o Firebase. Verifique sua internet.';
+        return `Falha de conexão com o Firebase Authentication. Verifique sua internet. (${error.code}: ${error.message})`;
       default:
-        return 'Não foi possível entrar. Verifique suas credenciais e tente novamente.';
+        return `Não foi possível entrar no Firebase Auth. (${error.code}: ${error.message})`;
     }
   }
-  return 'Não foi possível autenticar. Verifique sua conexão.';
+
+  return extractFriendlyFirestoreMessage(
+    error,
+    `Não foi possível validar seu acesso no Firestore (${details.message}).`,
+    true
+  );
 }
 
 export function AdminLoginPage({
@@ -61,7 +75,7 @@ export function AdminLoginPage({
 
   useEffect(() => {
     if (externalNotice) {
-      setError(externalNotice);
+      setError((prev) => prev || externalNotice);
     }
   }, [externalNotice]);
 
@@ -74,17 +88,58 @@ export function AdminLoginPage({
     try {
       await authPersistenceReady;
       const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
-      const profile = await resolvePanelUserProfile(credential.user);
-      if (!profile) {
-        await signOut(auth);
-        setError('Acesso não autorizado.');
+      const access = await resolvePanelUserAccess(credential.user);
+
+      if (access.status === 'missing_doc') {
+        await signOut(auth).catch(() => {});
+        const msg = `Autenticado no Firebase Auth, mas o documento usuarios/${access.uid} não existe no banco "${access.databaseId}".`;
+        console.error('[Ameta Login - Perfil ausente]', {
+          uid: access.uid,
+          email: credential.user.email,
+          projectId: firebaseRuntimeConfig.projectId,
+          databaseId: access.databaseId,
+        });
+        setError(msg);
         return;
       }
 
-      void recordSessionAudit(profile, 'LOGIN').catch(() => {});
-      onLoginSuccess(profile);
+      if (access.status === 'inactive') {
+        await signOut(auth).catch(() => {});
+        const msg = `Acesso bloqueado: o documento usuarios/${access.profile.uid} está com ativo = false.`;
+        console.error('[Ameta Login - Usuário inativo]', {
+          uid: access.profile.uid,
+          email: access.profile.email,
+          databaseId: firebaseRuntimeConfig.databaseId,
+        });
+        setError(msg);
+        return;
+      }
+
+      if (access.status === 'invalid_role') {
+        await signOut(auth).catch(() => {});
+        const msg = `Acesso negado: o campo role ("${access.rawRole}") em usuarios/${access.uid} não possui permissão para o painel.`;
+        console.error('[Ameta Login - Role inválida]', {
+          uid: access.uid,
+          rawRole: access.rawRole,
+          databaseId: firebaseRuntimeConfig.databaseId,
+        });
+        setError(msg);
+        return;
+      }
+
+      void recordSessionAudit(access.profile, 'LOGIN').catch(() => {});
+      onLoginSuccess(access.profile);
       onNavigate('/admin');
     } catch (err) {
+      const details = extractFirebaseErrorDetails(err);
+      console.error('[Ameta Login - Erro Firebase]', {
+        code: details.code || null,
+        message: details.message,
+        path: details.path || null,
+        projectId: firebaseRuntimeConfig.projectId,
+        databaseId: firebaseRuntimeConfig.databaseId,
+        error: err,
+      });
       setError(mapFirebaseAuthError(err));
     } finally {
       setIsSubmitting(false);

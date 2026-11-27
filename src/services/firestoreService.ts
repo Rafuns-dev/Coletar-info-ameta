@@ -1,9 +1,11 @@
+import { FirebaseError } from 'firebase/app';
 import { sendPasswordResetEmail, type User } from 'firebase/auth';
 import {
   addDoc,
   collection,
   deleteDoc,
   doc,
+  getCountFromServer,
   getDoc,
   getDocs,
   limit,
@@ -12,16 +14,21 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  startAfter,
   Timestamp,
   updateDoc,
   where,
   writeBatch,
+  type DocumentData,
+  type QueryConstraint,
+  type QueryDocumentSnapshot,
   type Unsubscribe,
 } from 'firebase/firestore';
 import {
   auth,
   createSecondaryAuthUserAndSendPasswordSetup,
   db,
+  firebaseRuntimeConfig,
   handleFirestoreError,
   OperationType,
 } from '../firebase.ts';
@@ -43,6 +50,11 @@ import {
   type RegistrationDocumentMimeType,
   type RegistrationDocumentType,
 } from '../shared/schema.ts';
+import {
+  filterAndSortRegistrations,
+  type FilterCriteria,
+  type SortOption,
+} from '../shared/searchFilters.ts';
 import {
   formatCEP,
   formatCNPJ,
@@ -71,23 +83,34 @@ function toIsoString(value: unknown): string {
 
 function normalizeCadastroPayload(raw: ContractorRegistrationInput) {
   const parsed = contractorRegistrationSchema.parse(raw);
+  const nomeCompleto = parsed.fullName.trim();
+  const cpf = formatCPF(parsed.cpf);
+  const cnpj = formatCNPJ(parsed.cnpj);
+  const cepEmpresa = formatCEP(parsed.companyCep);
+  const telefone = formatPhone(parsed.phone);
+
   return {
     dataCadastro: parsed.registrationDate.trim(),
     funcao: parsed.role.trim(),
-    nomeCompleto: parsed.fullName.trim(),
-    cpf: formatCPF(parsed.cpf),
+    nomeCompleto,
+    nomeCompletoLower: nomeCompleto.toLowerCase(),
+    cpf,
+    cpfDigitos: onlyDigits(cpf),
     rg: parsed.rg.trim(),
     naturalidade: parsed.birthPlace.trim(),
     nacionalidade: parsed.nationality.trim(),
     estadoCivil: parsed.maritalStatus.trim(),
     dataNascimento: parsed.birthDate.trim(),
-    cnpj: formatCNPJ(parsed.cnpj),
+    cnpj,
+    cnpjDigitos: onlyDigits(cnpj),
     enderecoEmpresa: parsed.companyAddress.trim(),
-    cepEmpresa: formatCEP(parsed.companyCep),
+    cepEmpresa,
+    cepDigitos: onlyDigits(cepEmpresa),
     nomePai: parsed.fatherName.trim(),
     nomeMae: parsed.motherName.trim(),
     email: parsed.email.trim().toLowerCase(),
-    telefone: formatPhone(parsed.phone),
+    telefone,
+    telefoneDigitos: onlyDigits(telefone),
   };
 }
 
@@ -192,26 +215,79 @@ function mapAuditoriaDoc(id: string, data: Record<string, unknown>): AuditLogIte
   };
 }
 
+export interface ExtractedFirebaseErrorDetails {
+  code?: string;
+  message: string;
+  operationType?: string;
+  path?: string | null;
+}
+
+export function extractFirebaseErrorDetails(
+  err: unknown,
+  fallback = 'Erro desconhecido.'
+): ExtractedFirebaseErrorDetails {
+  if (err instanceof FirebaseError) {
+    return {
+      code: err.code,
+      message: err.message || fallback,
+    };
+  }
+  if (err instanceof Error) {
+    try {
+      const parsed = JSON.parse(err.message) as {
+        error?: string;
+        code?: string;
+        operationType?: string;
+        path?: string | null;
+      };
+      if (parsed && typeof parsed.error === 'string') {
+        return {
+          code: parsed.code,
+          message: parsed.error,
+          operationType: parsed.operationType,
+          path: parsed.path,
+        };
+      }
+    } catch {
+      // mensagem comum
+    }
+    return {
+      message: err.message || fallback,
+    };
+  }
+  return {
+    message: typeof err === 'string' && err ? err : fallback,
+  };
+}
+
 export function extractFriendlyFirestoreMessage(
   err: unknown,
-  fallback = 'Não foi possível concluir a operação.'
+  fallback = 'Não foi possível concluir a operação.',
+  includeDiagnostic = false
 ): string {
-  if (!(err instanceof Error)) return fallback;
-  try {
-    const parsed = JSON.parse(err.message) as { error?: string };
-    if (parsed && typeof parsed.error === 'string') {
-      if (parsed.error.toLowerCase().includes('permission')) {
-        return 'Acesso não autorizado ou permissão negada pelo Firestore.';
-      }
-      if (parsed.error.toLowerCase().includes('quota')) {
-        return 'Cota diária do Firestore atingida. Tente novamente mais tarde.';
-      }
-      return parsed.error;
+  const details = extractFirebaseErrorDetails(err, fallback);
+  const lowerErr = details.message.toLowerCase();
+  const lowerCode = (details.code || '').toLowerCase();
+
+  let friendly = details.message || fallback;
+  if (lowerCode.includes('permission') || lowerErr.includes('permission')) {
+    if (details.operationType === 'create' && details.path === 'cadastros') {
+      friendly =
+        'Não foi possível concluir o envio. Verifique se este CPF ou CNPJ já possui cadastro enviado anteriormente ou confira os dados informados.';
+    } else {
+      friendly = 'Acesso não autorizado ou permissão negada pelo Firestore.';
     }
-  } catch {
-    // mensagem comum
+  } else if (lowerCode.includes('resource-exhausted') || lowerErr.includes('quota')) {
+    friendly = 'Cota diária do Firestore atingida. Tente novamente mais tarde.';
+  } else if (lowerCode.includes('unavailable') || lowerErr.includes('offline')) {
+    friendly = 'Sem conexão com o Firestore no momento. Verifique sua internet e tente novamente.';
   }
-  return err.message || fallback;
+
+  if (!includeDiagnostic) {
+    return friendly;
+  }
+  const codeLabel = details.code || 'firestore-error';
+  return `${friendly} (${codeLabel}: ${details.message})`;
 }
 
 export async function recordAuditLog(params: {
@@ -268,6 +344,135 @@ export async function recordSessionAudit(
 
 // ==================== FORMULÁRIO PÚBLICO ====================
 
+async function submitPublicRegistrationViaRest(params: {
+  cadastroId: string;
+  normalized: ReturnType<typeof normalizeCadastroPayload>;
+  attachments: RegistrationDocumentAttachmentInput[];
+}): Promise<void> {
+  const { projectId, databaseId, apiKey } = firebaseRuntimeConfig;
+  const dbName = databaseId || '(default)';
+  const docBase = `projects/${projectId}/databases/${dbName}/documents`;
+  const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/${encodeURIComponent(dbName)}/documents:commit?key=${encodeURIComponent(apiKey)}`;
+
+  const toStr = (v: string) => ({ stringValue: v });
+
+  const writes: Array<Record<string, unknown>> = [
+    {
+      update: {
+        name: `${docBase}/cadastros/${params.cadastroId}`,
+        fields: {
+          dataCadastro: toStr(params.normalized.dataCadastro),
+          funcao: toStr(params.normalized.funcao),
+          nomeCompleto: toStr(params.normalized.nomeCompleto),
+          nomeCompletoLower: toStr(params.normalized.nomeCompletoLower),
+          cpf: toStr(params.normalized.cpf),
+          cpfDigitos: toStr(params.normalized.cpfDigitos),
+          rg: toStr(params.normalized.rg),
+          naturalidade: toStr(params.normalized.naturalidade),
+          nacionalidade: toStr(params.normalized.nacionalidade),
+          estadoCivil: toStr(params.normalized.estadoCivil),
+          dataNascimento: toStr(params.normalized.dataNascimento),
+          cnpj: toStr(params.normalized.cnpj),
+          cnpjDigitos: toStr(params.normalized.cnpjDigitos),
+          enderecoEmpresa: toStr(params.normalized.enderecoEmpresa),
+          cepEmpresa: toStr(params.normalized.cepEmpresa),
+          cepDigitos: toStr(params.normalized.cepDigitos),
+          nomePai: toStr(params.normalized.nomePai),
+          nomeMae: toStr(params.normalized.nomeMae),
+          email: toStr(params.normalized.email),
+          telefone: toStr(params.normalized.telefone),
+          telefoneDigitos: toStr(params.normalized.telefoneDigitos),
+          status: toStr('Novo'),
+          observacoes: toStr(''),
+          visto: { booleanValue: false },
+          vistoEm: { nullValue: null },
+        },
+      },
+      currentDocument: { exists: false },
+      updateTransforms: [
+        { fieldPath: 'criadoEm', setToServerValue: 'REQUEST_TIME' },
+        { fieldPath: 'atualizadoEm', setToServerValue: 'REQUEST_TIME' },
+      ],
+    },
+    {
+      update: {
+        name: `${docBase}/cadastros_chaves/cpf_${params.normalized.cpfDigitos}`,
+        fields: {
+          tipo: toStr('cpf'),
+          valorDigitos: toStr(params.normalized.cpfDigitos),
+          cadastroId: toStr(params.cadastroId),
+        },
+      },
+      currentDocument: { exists: false },
+      updateTransforms: [{ fieldPath: 'criadoEm', setToServerValue: 'REQUEST_TIME' }],
+    },
+    {
+      update: {
+        name: `${docBase}/cadastros_chaves/cnpj_${params.normalized.cnpjDigitos}`,
+        fields: {
+          tipo: toStr('cnpj'),
+          valorDigitos: toStr(params.normalized.cnpjDigitos),
+          cadastroId: toStr(params.cadastroId),
+        },
+      },
+      currentDocument: { exists: false },
+      updateTransforms: [{ fieldPath: 'criadoEm', setToServerValue: 'REQUEST_TIME' }],
+    },
+    ...params.attachments.map((attachment) => ({
+      update: {
+        name: `${docBase}/cadastros/${params.cadastroId}/documentos/${attachment.tipo}`,
+        fields: {
+          tipo: toStr(attachment.tipo),
+          nomeArquivo: toStr(attachment.nomeArquivo),
+          mimeType: toStr(attachment.mimeType),
+          tamanhoBytes: { integerValue: String(attachment.tamanhoBytes) },
+          conteudoBase64: toStr(attachment.conteudoBase64),
+        },
+      },
+      currentDocument: { exists: false },
+      updateTransforms: [
+        { fieldPath: 'criadoEm', setToServerValue: 'REQUEST_TIME' },
+        { fieldPath: 'atualizadoEm', setToServerValue: 'REQUEST_TIME' },
+      ],
+    })),
+  ];
+
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 12000);
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ writes }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as {
+        error?: { status?: string; message?: string };
+      } | null;
+      const code =
+        response.status === 403
+          ? 'permission-denied'
+          : response.status === 409
+            ? 'already-exists'
+            : response.status === 503
+              ? 'unavailable'
+              : `http-${response.status}`;
+      throw new FirebaseError(
+        code,
+        body?.error?.message || `HTTP ${response.status} ao gravar cadastro no Firestore.`
+      );
+    }
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 export async function submitPublicRegistration(
   rawInput: ContractorRegistrationInput,
   attachments: RegistrationDocumentAttachmentInput[] = []
@@ -277,9 +482,11 @@ export async function submitPublicRegistration(
     registrationDocumentAttachmentSchema.parse(item)
   );
   const path = 'cadastros';
+  const cadastroRef = doc(collection(db, path));
+  const cpfLockRef = doc(db, 'cadastros_chaves', `cpf_${normalized.cpfDigitos}`);
+  const cnpjLockRef = doc(db, 'cadastros_chaves', `cnpj_${normalized.cnpjDigitos}`);
 
   try {
-    const cadastroRef = doc(collection(db, path));
     const batch = writeBatch(db);
 
     batch.set(cadastroRef, {
@@ -290,6 +497,20 @@ export async function submitPublicRegistration(
       vistoEm: null,
       criadoEm: serverTimestamp(),
       atualizadoEm: serverTimestamp(),
+    });
+
+    batch.set(cpfLockRef, {
+      tipo: 'cpf',
+      valorDigitos: normalized.cpfDigitos,
+      cadastroId: cadastroRef.id,
+      criadoEm: serverTimestamp(),
+    });
+
+    batch.set(cnpjLockRef, {
+      tipo: 'cnpj',
+      valorDigitos: normalized.cnpjDigitos,
+      cadastroId: cadastroRef.id,
+      criadoEm: serverTimestamp(),
     });
 
     for (const attachment of parsedAttachments) {
@@ -305,29 +526,215 @@ export async function submitPublicRegistration(
       });
     }
 
-    await batch.commit();
+    let timeoutId: number | undefined;
+    try {
+      await Promise.race([
+        batch.commit(),
+        new Promise<never>((_, reject) => {
+          timeoutId = window.setTimeout(
+            () =>
+              reject(
+                new FirebaseError(
+                  'unavailable',
+                  'Tempo limite ao gravar cadastro pelo canal em tempo real do Firestore.'
+                )
+              ),
+            10000
+          );
+        }),
+      ]);
+    } finally {
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId);
+      }
+    }
+
     return cadastroRef.id;
   } catch (error) {
+    const errMsg = error instanceof Error ? error.message.toLowerCase() : '';
+    const errCode = error instanceof FirebaseError ? error.code : '';
+    const isTransientOffline =
+      errCode === 'unavailable' ||
+      errMsg.includes('offline') ||
+      errMsg.includes('tempo limite');
+
+    if (isTransientOffline && typeof fetch === 'function') {
+      try {
+        await submitPublicRegistrationViaRest({
+          cadastroId: cadastroRef.id,
+          normalized,
+          attachments: parsedAttachments,
+        });
+        return cadastroRef.id;
+      } catch (restError) {
+        handleFirestoreError(restError, OperationType.CREATE, path);
+      }
+    }
+
     handleFirestoreError(error, OperationType.CREATE, path);
   }
 }
 
 // ==================== AUTENTICAÇÃO E PERFIL DO PAINEL ====================
 
+export type PanelUserAccessResult =
+  | { status: 'authorized'; profile: PanelUserProfile }
+  | { status: 'missing_doc'; uid: string; databaseId: string }
+  | { status: 'inactive'; profile: PanelUserProfile }
+  | { status: 'invalid_role'; uid: string; rawRole: string };
+
+interface FirestoreRestValue {
+  stringValue?: string;
+  booleanValue?: boolean;
+  timestampValue?: string;
+}
+
+function parseRestUsuarioFields(
+  fields: Record<string, FirestoreRestValue> | undefined
+): Record<string, unknown> {
+  if (!fields) return {};
+  return {
+    nome: fields.nome?.stringValue ?? '',
+    email: fields.email?.stringValue ?? '',
+    role: fields.role?.stringValue ?? fields.perfil?.stringValue ?? '',
+    ativo: Boolean(fields.ativo?.booleanValue),
+    criadoEm: fields.criadoEm?.timestampValue ?? new Date().toISOString(),
+    atualizadoEm:
+      fields.atualizadoEm?.timestampValue ??
+      fields.criadoEm?.timestampValue ??
+      new Date().toISOString(),
+  };
+}
+
+async function fetchUsuarioDocViaRest(
+  firebaseUser: User
+): Promise<{ exists: boolean; data?: Record<string, unknown> }> {
+  const token = await firebaseUser.getIdToken();
+  const { projectId, databaseId, apiKey } = firebaseRuntimeConfig;
+  const dbName = databaseId || '(default)';
+  const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/${encodeURIComponent(dbName)}/documents/usuarios/${encodeURIComponent(firebaseUser.uid)}?key=${encodeURIComponent(apiKey)}`;
+
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 8000);
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+      signal: controller.signal,
+    });
+
+    if (response.status === 404) {
+      return { exists: false };
+    }
+
+    const body = (await response.json().catch(() => null)) as {
+      fields?: Record<string, FirestoreRestValue>;
+      error?: { status?: string; message?: string };
+    } | null;
+
+    if (!response.ok) {
+      const code =
+        response.status === 403
+          ? 'permission-denied'
+          : response.status === 503
+            ? 'unavailable'
+            : `http-${response.status}`;
+      throw new FirebaseError(
+        code,
+        body?.error?.message || `HTTP ${response.status} ao consultar usuarios/${firebaseUser.uid}.`
+      );
+    }
+
+    return {
+      exists: true,
+      data: parseRestUsuarioFields(body?.fields),
+    };
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+function evaluateUsuarioAccess(
+  uid: string,
+  data: Record<string, unknown>
+): PanelUserAccessResult {
+  const rawRole = String(data.role ?? data.perfil ?? '').trim();
+  if (rawRole !== 'admin' && rawRole !== 'administrador' && rawRole !== 'operador') {
+    return {
+      status: 'invalid_role',
+      uid,
+      rawRole: rawRole || '(vazio)',
+    };
+  }
+
+  const profile = mapUsuarioDoc(uid, data);
+  if (!profile.ativo) {
+    return { status: 'inactive', profile };
+  }
+  return { status: 'authorized', profile };
+}
+
+export async function resolvePanelUserAccess(
+  firebaseUser: User
+): Promise<PanelUserAccessResult> {
+  const userPath = `usuarios/${firebaseUser.uid}`;
+  try {
+    const snap = await Promise.race([
+      getDoc(doc(db, 'usuarios', firebaseUser.uid)),
+      new Promise<never>((_, reject) => {
+        window.setTimeout(
+          () => reject(new FirebaseError('unavailable', 'Tempo limite ao ler documento do usuário no Firestore.')),
+          6000
+        );
+      }),
+    ]);
+
+    if (!snap.exists()) {
+      return {
+        status: 'missing_doc',
+        uid: firebaseUser.uid,
+        databaseId: firebaseRuntimeConfig.databaseId,
+      };
+    }
+
+    return evaluateUsuarioAccess(snap.id, snap.data());
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message.toLowerCase() : '';
+    const errCode = error instanceof FirebaseError ? error.code : '';
+    const isTransientOffline =
+      errCode === 'unavailable' ||
+      errMsg.includes('offline') ||
+      errMsg.includes('tempo limite');
+
+    if (isTransientOffline && typeof fetch === 'function') {
+      try {
+        const restRes = await fetchUsuarioDocViaRest(firebaseUser);
+        if (!restRes.exists || !restRes.data) {
+          return {
+            status: 'missing_doc',
+            uid: firebaseUser.uid,
+            databaseId: firebaseRuntimeConfig.databaseId,
+          };
+        }
+        return evaluateUsuarioAccess(firebaseUser.uid, restRes.data);
+      } catch (restError) {
+        handleFirestoreError(restError, OperationType.GET, userPath);
+      }
+    }
+
+    handleFirestoreError(error, OperationType.GET, userPath);
+  }
+}
+
 export async function resolvePanelUserProfile(
   firebaseUser: User
 ): Promise<PanelUserProfile | null> {
-  const userPath = `usuarios/${firebaseUser.uid}`;
-  try {
-    const snap = await getDoc(doc(db, 'usuarios', firebaseUser.uid));
-    if (!snap.exists()) {
-      return null;
-    }
-    const profile = mapUsuarioDoc(snap.id, snap.data());
-    return profile.ativo ? profile : null;
-  } catch (error) {
-    handleFirestoreError(error, OperationType.GET, userPath);
-  }
+  const res = await resolvePanelUserAccess(firebaseUser);
+  return res.status === 'authorized' ? res.profile : null;
 }
 
 // ==================== CADASTROS (PAINEL EM TEMPO REAL) ====================
@@ -353,6 +760,124 @@ export function subscribeToCadastros(
       }
     }
   );
+}
+
+export type CadastroCursor = QueryDocumentSnapshot<DocumentData> | null;
+
+export interface CadastrosCursorPageResult {
+  items: ContractorRegistrationDetail[];
+  nextCursor: CadastroCursor;
+  hasMore: boolean;
+  totalMatching: number;
+}
+
+function resolveFirestoreOrderClause(sort: SortOption = 'registrationDate:desc'): {
+  field: string;
+  direction: 'asc' | 'desc';
+} {
+  switch (sort) {
+    case 'registrationDate:asc':
+      return { field: 'dataCadastro', direction: 'asc' };
+    case 'registrationDate:desc':
+      return { field: 'dataCadastro', direction: 'desc' };
+    case 'fullName:asc':
+      return { field: 'nomeCompleto', direction: 'asc' };
+    case 'fullName:desc':
+      return { field: 'nomeCompleto', direction: 'desc' };
+    case 'status:asc':
+      return { field: 'status', direction: 'asc' };
+    default:
+      return { field: 'criadoEm', direction: 'desc' };
+  }
+}
+
+export async function fetchCadastrosPageWithCursor(params: {
+  pageSize: number;
+  page?: number;
+  cursor?: CadastroCursor;
+  status?: string;
+  role?: string;
+  maritalStatus?: string;
+  unseenOnly?: boolean;
+  sort?: SortOption;
+}): Promise<CadastrosCursorPageResult> {
+  const path = 'cadastros';
+  const coll = collection(db, path);
+  const filters: QueryConstraint[] = [];
+
+  if (params.status && params.status !== 'ALL') {
+    filters.push(where('status', '==', params.status));
+  }
+  if (params.role) {
+    filters.push(where('funcao', '==', params.role));
+  }
+  if (params.maritalStatus && params.maritalStatus !== 'ALL') {
+    filters.push(where('estadoCivil', '==', params.maritalStatus));
+  }
+  if (params.unseenOnly) {
+    filters.push(where('visto', '==', false));
+  }
+
+  const orderCfg = resolveFirestoreOrderClause(params.sort);
+  const countQuery = query(coll, ...filters);
+  const pageConstraints: QueryConstraint[] = [
+    ...filters,
+    orderBy(orderCfg.field, orderCfg.direction),
+    ...(params.cursor ? [startAfter(params.cursor)] : []),
+    limit(params.pageSize + 1),
+  ];
+
+  try {
+    const [countSnap, docsSnap] = await Promise.all([
+      getCountFromServer(countQuery),
+      getDocs(query(coll, ...pageConstraints)),
+    ]);
+
+    const hasMore = docsSnap.docs.length > params.pageSize;
+    const pageDocs = hasMore ? docsSnap.docs.slice(0, params.pageSize) : docsSnap.docs;
+
+    return {
+      items: pageDocs.map((d) => mapCadastroDoc(d.id, d.data())),
+      nextCursor: pageDocs.length > 0 ? pageDocs[pageDocs.length - 1] : null,
+      hasMore,
+      totalMatching: countSnap.data().count,
+    };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message.toLowerCase() : '';
+    if (msg.includes('requires an index') || msg.includes('failed-precondition')) {
+      const fallbackSnap = await getDocs(query(coll, orderBy('criadoEm', 'desc')));
+      const allMapped = fallbackSnap.docs.map((d) => mapCadastroDoc(d.id, d.data()));
+      const filtered = filterAndSortRegistrations(allMapped, {
+        status: params.status,
+        roles: params.role ? [params.role] : undefined,
+        maritalStatus: params.maritalStatus,
+        unseenOnly: params.unseenOnly,
+        sort: params.sort,
+      });
+      const targetPage = Math.max(1, params.page ?? 1);
+      const startIdx = (targetPage - 1) * params.pageSize;
+      return {
+        items: filtered.slice(startIdx, startIdx + params.pageSize),
+        nextCursor: null,
+        hasMore: startIdx + params.pageSize < filtered.length,
+        totalMatching: filtered.length,
+      };
+    }
+    handleFirestoreError(error, OperationType.LIST, path);
+  }
+}
+
+export async function fetchFilteredCadastrosFromFirestore(
+  criteria: FilterCriteria
+): Promise<ContractorRegistrationDetail[]> {
+  const path = 'cadastros';
+  try {
+    const snap = await getDocs(query(collection(db, path), orderBy('criadoEm', 'desc')));
+    const records = snap.docs.map((d) => mapCadastroDoc(d.id, d.data()));
+    return filterAndSortRegistrations(records, criteria);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, path);
+  }
 }
 
 export async function getCadastroById(
@@ -480,11 +1005,65 @@ export async function updateCadastroFull(
 ): Promise<void> {
   const normalized = normalizeCadastroPayload(rawInput);
   const path = `cadastros/${cadastroId}`;
+  const cadastroRef = doc(db, 'cadastros', cadastroId);
+
   try {
-    await updateDoc(doc(db, 'cadastros', cadastroId), {
+    const currentSnap = await getDoc(cadastroRef);
+    const currentData = currentSnap.exists() ? currentSnap.data() : null;
+    const oldCpfDigitos = currentData ? onlyDigits(String(currentData.cpf || '')) : '';
+    const oldCnpjDigitos = currentData ? onlyDigits(String(currentData.cnpj || '')) : '';
+
+    const cpfChanged = oldCpfDigitos !== normalized.cpfDigitos;
+    const cnpjChanged = oldCnpjDigitos !== normalized.cnpjDigitos;
+
+    const newCpfLockRef = doc(db, 'cadastros_chaves', `cpf_${normalized.cpfDigitos}`);
+    const newCnpjLockRef = doc(db, 'cadastros_chaves', `cnpj_${normalized.cnpjDigitos}`);
+
+    if (cpfChanged) {
+      const existingCpfLock = await getDoc(newCpfLockRef);
+      if (existingCpfLock.exists() && existingCpfLock.data()?.cadastroId !== cadastroId) {
+        throw new Error('Já existe outro cadastro registrado com este CPF.');
+      }
+    }
+    if (cnpjChanged) {
+      const existingCnpjLock = await getDoc(newCnpjLockRef);
+      if (existingCnpjLock.exists() && existingCnpjLock.data()?.cadastroId !== cadastroId) {
+        throw new Error('Já existe outro cadastro registrado com este CNPJ.');
+      }
+    }
+
+    const batch = writeBatch(db);
+    batch.update(cadastroRef, {
       ...normalized,
       atualizadoEm: serverTimestamp(),
     });
+
+    if (cpfChanged) {
+      if (oldCpfDigitos.length === 11) {
+        batch.delete(doc(db, 'cadastros_chaves', `cpf_${oldCpfDigitos}`));
+      }
+      batch.set(newCpfLockRef, {
+        tipo: 'cpf',
+        valorDigitos: normalized.cpfDigitos,
+        cadastroId,
+        criadoEm: serverTimestamp(),
+      });
+    }
+
+    if (cnpjChanged) {
+      if (oldCnpjDigitos.length === 14) {
+        batch.delete(doc(db, 'cadastros_chaves', `cnpj_${oldCnpjDigitos}`));
+      }
+      batch.set(newCnpjLockRef, {
+        tipo: 'cnpj',
+        valorDigitos: normalized.cnpjDigitos,
+        cadastroId,
+        criadoEm: serverTimestamp(),
+      });
+    }
+
+    await batch.commit();
+
     await recordAuditLog({
       acao: 'EDITOU_CADASTRO',
       entidade: 'cadastros',
@@ -494,6 +1073,12 @@ export async function updateCadastroFull(
       detalhes: { resumo: `Editou dados cadastrais de ${normalized.nomeCompleto}` },
     });
   } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.startsWith('Já existe outro cadastro registrado')
+    ) {
+      throw error;
+    }
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
 }
@@ -505,10 +1090,12 @@ export async function deleteCadastroWithCascade(
 ): Promise<void> {
   const path = `cadastros/${cadastroId}`;
   try {
-    const termosSnap = await getDocs(
-      query(collection(db, 'termos'), where('cadastroId', '==', cadastroId))
-    );
-    const docsSnap = await getDocs(collection(db, 'cadastros', cadastroId, 'documentos'));
+    const cadastroRef = doc(db, 'cadastros', cadastroId);
+    const [cadastroSnap, termosSnap, docsSnap] = await Promise.all([
+      getDoc(cadastroRef),
+      getDocs(query(collection(db, 'termos'), where('cadastroId', '==', cadastroId))),
+      getDocs(collection(db, 'cadastros', cadastroId, 'documentos')),
+    ]);
 
     const batch = writeBatch(db);
     for (const termoDoc of termosSnap.docs) {
@@ -517,7 +1104,20 @@ export async function deleteCadastroWithCascade(
     for (const anexoDoc of docsSnap.docs) {
       batch.delete(anexoDoc.ref);
     }
-    batch.delete(doc(db, 'cadastros', cadastroId));
+
+    if (cadastroSnap.exists()) {
+      const data = cadastroSnap.data();
+      const cpfDigitos = onlyDigits(String(data.cpfDigitos || data.cpf || ''));
+      const cnpjDigitos = onlyDigits(String(data.cnpjDigitos || data.cnpj || ''));
+      if (cpfDigitos.length === 11) {
+        batch.delete(doc(db, 'cadastros_chaves', `cpf_${cpfDigitos}`));
+      }
+      if (cnpjDigitos.length === 14) {
+        batch.delete(doc(db, 'cadastros_chaves', `cnpj_${cnpjDigitos}`));
+      }
+    }
+
+    batch.delete(cadastroRef);
     await batch.commit();
 
     await recordAuditLog({

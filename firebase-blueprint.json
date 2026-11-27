@@ -131,6 +131,35 @@
         "atualizadoEm": {
           "type": "string",
           "format": "date-time"
+        },
+        "nomeCompletoLower": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 150
+        },
+        "cpfDigitos": {
+          "type": "string",
+          "minLength": 11,
+          "maxLength": 11,
+          "pattern": "^[0-9]{11}$"
+        },
+        "cnpjDigitos": {
+          "type": "string",
+          "minLength": 14,
+          "maxLength": 14,
+          "pattern": "^[0-9]{14}$"
+        },
+        "telefoneDigitos": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 11,
+          "pattern": "^[0-9]{10,11}$"
+        },
+        "cepDigitos": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 8,
+          "pattern": "^[0-9]{8}$"
         }
       },
       "required": [
@@ -417,6 +446,34 @@
         "criadoEm",
         "atualizadoEm"
       ]
+    },
+    "CadastroChaveUnica": {
+      "title": "Chave de Unicidade (CPF/CNPJ)",
+      "description": "Documento determinístico (cpf_<dígitos> ou cnpj_<dígitos>) criado atomicamente no envio para impedir cadastros duplicados sem expor leitura pública.",
+      "type": "object",
+      "properties": {
+        "tipo": {
+          "type": "string",
+          "enum": ["cpf", "cnpj"]
+        },
+        "valorDigitos": {
+          "type": "string",
+          "minLength": 11,
+          "maxLength": 14,
+          "pattern": "^[0-9]{11,14}$"
+        },
+        "cadastroId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "criadoEm": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["tipo", "valorDigitos", "cadastroId", "criadoEm"]
     }
   },
   "firestore": {
@@ -424,7 +481,13 @@
       "schema": {
         "$ref": "#/entities/Cadastro"
       },
-      "description": "Coleção principal com os 16 campos do prestador e metadados operacionais."
+      "description": "Coleção principal com os 16 campos do prestador, campos normalizados de busca e metadados operacionais."
+    },
+    "/cadastros_chaves/{chaveId}": {
+      "schema": {
+        "$ref": "#/entities/CadastroChaveUnica"
+      },
+      "description": "Índice de bloqueio atômico contra duplicidade de CPF e CNPJ (sem leitura pública)."
     },
     "/cadastros/{cadastroId}/documentos/{docTipo}": {
       "schema": {

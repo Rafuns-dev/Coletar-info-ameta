@@ -48,7 +48,7 @@ service cloud.firestore {
         && perfil().role in ['admin', 'operador'];
     }
 
-    function admin() {
+    function isAdmin() {
       return temPerfil()
         && perfil().ativo == true
         && perfil().role == 'admin';
@@ -117,7 +117,12 @@ service cloud.firestore {
         'visto',
         'vistoEm',
         'criadoEm',
-        'atualizadoEm'
+        'atualizadoEm',
+        'nomeCompletoLower',
+        'cpfDigitos',
+        'cnpjDigitos',
+        'telefoneDigitos',
+        'cepDigitos'
       ])
       && txt(data.dataCadastro, 10, 10)
       && data.dataCadastro.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
@@ -159,7 +164,36 @@ service cloud.firestore {
       && data.visto is bool
       && (data.vistoEm == null || data.vistoEm is timestamp)
       && data.criadoEm is timestamp
-      && data.atualizadoEm is timestamp;
+      && data.atualizadoEm is timestamp
+      && (!('nomeCompletoLower' in data) || txt(data.nomeCompletoLower, 3, 150))
+      && (!('cpfDigitos' in data) || (txt(data.cpfDigitos, 11, 11) && data.cpfDigitos.matches('^[0-9]{11}$')))
+      && (!('cnpjDigitos' in data) || (txt(data.cnpjDigitos, 14, 14) && data.cnpjDigitos.matches('^[0-9]{14}$')))
+      && (!('telefoneDigitos' in data) || (txt(data.telefoneDigitos, 10, 11) && data.telefoneDigitos.matches('^[0-9]{10,11}$')))
+      && (!('cepDigitos' in data) || (txt(data.cepDigitos, 8, 8) && data.cepDigitos.matches('^[0-9]{8}$')));
+    }
+
+    function hasNormalizedCadastroFields(data) {
+      return data.keys().hasAll([
+        'nomeCompletoLower',
+        'cpfDigitos',
+        'cnpjDigitos',
+        'telefoneDigitos',
+        'cepDigitos'
+      ]);
+    }
+
+    function isValidCadastroChave(data, chaveId) {
+      return data.keys().hasAll(['tipo', 'valorDigitos', 'cadastroId', 'criadoEm'])
+        && data.keys().hasOnly(['tipo', 'valorDigitos', 'cadastroId', 'criadoEm'])
+        && data.tipo is string
+        && data.tipo in ['cpf', 'cnpj']
+        && data.valorDigitos is string
+        && (
+          (data.tipo == 'cpf' && data.valorDigitos.size() == 11 && data.valorDigitos.matches('^[0-9]{11}$') && chaveId == 'cpf_' + data.valorDigitos)
+          || (data.tipo == 'cnpj' && data.valorDigitos.size() == 14 && data.valorDigitos.matches('^[0-9]{14}$') && chaveId == 'cnpj_' + data.valorDigitos)
+        )
+        && isValidId(data.cadastroId)
+        && data.criadoEm is timestamp;
     }
 
     function isValidDocumentoAnexo(data, docTipo) {
@@ -404,15 +438,19 @@ service cloud.firestore {
 
     // CADASTROS (formulário público)
     match /cadastros/{cadastroId} {
-      // Visitante sem login: SOMENTE criar com os 16 campos exatos e estado inicial fixo
+      // Visitante sem login: SOMENTE criar com os 16 campos exatos, campos normalizados, estado inicial fixo
+      // e criação atômica das chaves únicas de CPF e CNPJ (bloqueia duplicidade no banco)
       allow create: if isValidId(cadastroId)
         && isValidCadastro(incoming())
+        && hasNormalizedCadastroFields(incoming())
         && incoming().status == 'Novo'
         && incoming().observacoes == ''
         && incoming().visto == false
         && incoming().vistoEm == null
         && incoming().criadoEm == request.time
-        && incoming().atualizadoEm == request.time;
+        && incoming().atualizadoEm == request.time
+        && existsAfter(/databases/$(database)/documents/cadastros_chaves/$('cpf_' + incoming().cpfDigitos))
+        && existsAfter(/databases/$(database)/documents/cadastros_chaves/$('cnpj_' + incoming().cnpjDigitos));
 
       // Somente a equipe com perfil ativo lê
       allow get, list: if equipe();
@@ -424,7 +462,7 @@ service cloud.firestore {
         && incoming().criadoEm == existing().criadoEm
         && incoming().atualizadoEm == request.time
         && (
-          admin()
+          isAdmin()
           || incoming().diff(existing()).affectedKeys().hasOnly([
             'status',
             'observacoes',
@@ -435,7 +473,7 @@ service cloud.firestore {
         );
 
       // Só administrador exclui
-      allow delete: if admin() && isValidId(cadastroId);
+      allow delete: if isAdmin() && isValidId(cadastroId);
 
       // DOCUMENTOS OPCIONAIS ANEXADOS (RG, CNH, Certificado MEI)
       match /documentos/{docTipo} {
@@ -475,10 +513,33 @@ service cloud.firestore {
             'atualizadoEm'
           ]);
 
-        allow delete: if admin()
+        allow delete: if isAdmin()
           && isValidId(cadastroId)
           && docTipo in ['rg', 'cnh', 'certificado_mei'];
       }
+    }
+
+    // CHAVES DE UNICIDADE (anti-duplicidade de CPF/CNPJ sem exposição pública)
+    match /cadastros_chaves/{chaveId} {
+      allow get, list: if isAdmin();
+
+      allow create: if isValidId(chaveId)
+        && isValidCadastroChave(incoming(), chaveId)
+        && incoming().criadoEm == request.time
+        && (
+          (isAdmin() && existsAfter(/databases/$(database)/documents/cadastros/$(incoming().cadastroId)))
+          || (
+            existsAfter(/databases/$(database)/documents/cadastros/$(incoming().cadastroId))
+            && getAfter(/databases/$(database)/documents/cadastros/$(incoming().cadastroId)).data.criadoEm == request.time
+            && (
+              (incoming().tipo == 'cpf' && getAfter(/databases/$(database)/documents/cadastros/$(incoming().cadastroId)).data.cpfDigitos == incoming().valorDigitos)
+              || (incoming().tipo == 'cnpj' && getAfter(/databases/$(database)/documents/cadastros/$(incoming().cadastroId)).data.cnpjDigitos == incoming().valorDigitos)
+            )
+          )
+        );
+
+      allow update: if false;
+      allow delete: if isAdmin() && isValidId(chaveId);
     }
 
     // TERMOS DE DESCONTO GERADOS
@@ -493,12 +554,12 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/cadastros/$(incoming().cadastroId));
 
       allow update: if false;
-      allow delete: if admin() && isValidId(termoId);
+      allow delete: if isAdmin() && isValidId(termoId);
     }
 
     // AUDITORIA
     match /auditoria/{auditoriaId} {
-      allow get, list: if admin();
+      allow get, list: if isAdmin();
 
       allow create: if equipe()
         && isValidId(auditoriaId)
@@ -511,16 +572,16 @@ service cloud.firestore {
 
     // USUÁRIOS DO PAINEL
     match /usuarios/{uid} {
-      allow get: if admin() || (signedIn() && request.auth.uid == uid);
-      allow list: if admin();
+      allow get: if (signedIn() && request.auth.uid == uid) || isAdmin();
+      allow list: if isAdmin();
 
-      allow create: if admin()
+      allow create: if isAdmin()
         && isValidId(uid)
         && isValidUsuario(incoming())
         && incoming().criadoEm == request.time
         && (!('atualizadoEm' in incoming()) || incoming().atualizadoEm == request.time);
 
-      allow update: if admin()
+      allow update: if isAdmin()
         && isValidId(uid)
         && isValidUsuario(incoming())
         && incoming().criadoEm == existing().criadoEm
@@ -534,7 +595,7 @@ service cloud.firestore {
           'atualizadoEm'
         ]);
 
-      allow delete: if admin()
+      allow delete: if isAdmin()
         && isValidId(uid)
         && uid != request.auth.uid;
     }

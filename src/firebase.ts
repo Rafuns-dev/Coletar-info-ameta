@@ -1,4 +1,4 @@
-import { deleteApp, getApps, initializeApp, type FirebaseOptions } from 'firebase/app';
+import { deleteApp, FirebaseError, getApps, initializeApp, type FirebaseOptions } from 'firebase/app';
 import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 import {
   browserSessionPersistence,
@@ -13,7 +13,6 @@ import {
   doc,
   getDocFromServer,
   getFirestore,
-  initializeFirestore,
   type Firestore,
 } from 'firebase/firestore';
 import firebaseAppletConfig from '../firebase-applet-config.json';
@@ -36,21 +35,14 @@ const recaptchaSiteKey =
 
 export const app = getApps().length > 0 ? getApps()[0] : initializeApp(envConfig);
 
+export const firebaseRuntimeConfig = {
+  projectId: envConfig.projectId,
+  databaseId,
+  apiKey: envConfig.apiKey,
+};
+
 function createFirestoreInstance(): Firestore {
   const targetDbId = databaseId && databaseId !== '(default)' ? databaseId : undefined;
-  if (typeof window !== 'undefined') {
-    try {
-      return initializeFirestore(
-        app,
-        {
-          experimentalForceLongPolling: true,
-        },
-        targetDbId
-      );
-    } catch {
-      return targetDbId ? getFirestore(app, targetDbId) : getFirestore(app);
-    }
-  }
   return targetDbId ? getFirestore(app, targetDbId) : getFirestore(app);
 }
 
@@ -100,6 +92,7 @@ export enum OperationType {
 
 export interface FirestoreErrorInfo {
   error: string;
+  code?: string;
   operationType: OperationType;
   path: string | null;
   authInfo: {
@@ -122,6 +115,7 @@ export function handleFirestoreError(
 ): never {
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
+    code: error instanceof FirebaseError ? error.code : undefined,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
@@ -141,28 +135,49 @@ export function handleFirestoreError(
   throw new Error(JSON.stringify(errInfo));
 }
 
+async function isFirestoreRestReachable(): Promise<boolean> {
+  if (
+    typeof fetch !== 'function' ||
+    !envConfig.projectId ||
+    envConfig.projectId === 'remixed-project-id' ||
+    !envConfig.apiKey
+  ) {
+    return false;
+  }
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 8000);
+  try {
+    const dbName = databaseId || '(default)';
+    const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(envConfig.projectId)}/databases/${encodeURIComponent(dbName)}/documents/test/connection?key=${encodeURIComponent(envConfig.apiKey)}`;
+    const response = await fetch(url, { method: 'GET', signal: controller.signal });
+    return response.status >= 200 && response.status < 500;
+  } catch {
+    return false;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 async function testConnection(): Promise<void> {
   if (typeof window === 'undefined') return;
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
 
-  const attemptCheck = async () => {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-  };
-
   try {
-    await attemptCheck();
+    await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
-      await new Promise((resolve) => window.setTimeout(resolve, 1200));
-      try {
-        await attemptCheck();
-      } catch (retryError) {
-        if (
-          retryError instanceof Error &&
-          retryError.message.includes('the client is offline')
-        ) {
-          console.error('Verifique sua configuração do Firebase (cliente offline).');
-        }
+      const restReachable = await isFirestoreRestReachable();
+      if (restReachable) {
+        console.warn(
+          'Conexão WebChannel do Firestore demorou para responder, mas a API REST do projeto está acessível.'
+        );
+        return;
+      }
+
+      await new Promise((resolve) => window.setTimeout(resolve, 1500));
+      const retryReachable = await isFirestoreRestReachable();
+      if (!retryReachable && navigator.onLine !== false) {
+        console.error('Verifique sua configuração do Firebase (cliente offline).');
       }
     }
   }

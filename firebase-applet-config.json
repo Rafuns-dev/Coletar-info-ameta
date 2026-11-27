@@ -1,12 +1,12 @@
 {
-  "projectId": "adiantamento-c98f5",
-  "appId": "1:277330073497:web:989eaaad240b391a59a508",
-  "apiKey": "AIzaSyCoy_BE4jPplNf40yA4NfImSouhY-GJr_0",
-  "authDomain": "adiantamento-c98f5.firebaseapp.com",
+  "projectId": "cadastro-ameta",
+  "appId": "1:480014160465:web:bb181e3515dd2943ee5e70",
+  "apiKey": "AIzaSyBuIlT_C96SFCF8nbCX_3Pw-ds4i3OYTxQ",
+  "authDomain": "cadastro-ameta.firebaseapp.com",
   "firestoreDatabaseId": "ai-studio-ametacadastrodep-e864c6b3-b2f0-40b8-a76a-8a4b3f18071b",
-  "storageBucket": "adiantamento-c98f5.firebasestorage.app",
-  "messagingSenderId": "277330073497",
+  "storageBucket": "cadastro-ameta.firebasestorage.app",
+  "messagingSenderId": "480014160465",
   "measurementId": "",
-  "oAuthClientId": "277330073497-bc9lsii4m67ft9f02hhqksadg32ofef9.apps.googleusercontent.com",
+  "oAuthClientId": "480014160465-gd7qa2f0aa2ssr68ojn9kssi5p4erp6a.apps.googleusercontent.com",
   "recaptchaSiteKey": ""
 }

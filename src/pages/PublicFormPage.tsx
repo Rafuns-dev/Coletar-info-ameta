@@ -17,7 +17,9 @@ import {
 import { useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { AmetaLogo } from '../components/AmetaLogo.tsx';
+import { firebaseRuntimeConfig } from '../firebase.ts';
 import {
+  extractFirebaseErrorDetails,
   extractFriendlyFirestoreMessage,
   submitPublicRegistration,
 } from '../services/firestoreService.ts';
@@ -50,20 +52,28 @@ const RATE_LIMIT_STORAGE_KEY = 'ameta_public_submit_timestamps_v1';
 const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 const RATE_LIMIT_MAX_ATTEMPTS = 3;
 
-function checkAndRecordClientRateLimit(): boolean {
+function isClientRateLimited(): boolean {
   try {
     const raw = window.sessionStorage.getItem(RATE_LIMIT_STORAGE_KEY);
     const now = Date.now();
     const prev: number[] = raw ? (JSON.parse(raw) as number[]) : [];
     const recent = prev.filter((ts) => typeof ts === 'number' && now - ts < RATE_LIMIT_WINDOW_MS);
-    if (recent.length >= RATE_LIMIT_MAX_ATTEMPTS) {
-      return false;
-    }
+    return recent.length >= RATE_LIMIT_MAX_ATTEMPTS;
+  } catch {
+    return false;
+  }
+}
+
+function recordClientRateLimitAttempt(): void {
+  try {
+    const raw = window.sessionStorage.getItem(RATE_LIMIT_STORAGE_KEY);
+    const now = Date.now();
+    const prev: number[] = raw ? (JSON.parse(raw) as number[]) : [];
+    const recent = prev.filter((ts) => typeof ts === 'number' && now - ts < RATE_LIMIT_WINDOW_MS);
     recent.push(now);
     window.sessionStorage.setItem(RATE_LIMIT_STORAGE_KEY, JSON.stringify(recent));
-    return true;
   } catch {
-    return true;
+    // ignora caso sessionStorage esteja indisponível
   }
 }
 
@@ -191,7 +201,7 @@ export function PublicFormPage({ onNavigate }: PublicFormPageProps) {
       return;
     }
 
-    if (!checkAndRecordClientRateLimit()) {
+    if (isClientRateLimited()) {
       setServerError(
         'Muitos envios seguidos detectados neste navegador. Aguarde alguns minutos e tente novamente.'
       );
@@ -203,13 +213,24 @@ export function PublicFormPage({ onNavigate }: PublicFormPageProps) {
         (item): item is RegistrationDocumentAttachmentInput => Boolean(item)
       );
       await submitPublicRegistration(data, attachmentList);
+      recordClientRateLimitAttempt();
       setSubmitted(true);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (error) {
+      const details = extractFirebaseErrorDetails(error);
+      console.error('[Ameta Formulário Público - Erro Firebase]', {
+        code: details.code || null,
+        message: details.message,
+        path: details.path || 'cadastros',
+        projectId: firebaseRuntimeConfig.projectId,
+        databaseId: firebaseRuntimeConfig.databaseId,
+        error,
+      });
       setServerError(
         extractFriendlyFirestoreMessage(
           error,
-          'Não foi possível enviar o cadastro. Verifique os dados informados e tente novamente.'
+          'Não foi possível enviar o cadastro. Verifique os dados informados e tente novamente.',
+          true
         )
       );
     }
